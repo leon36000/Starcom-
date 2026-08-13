@@ -1,0 +1,16 @@
+{
+  "schema_version": "starcom.verification-claims.v1",
+  "generated_at": "2026-08-13",
+  "branch": "bootstrap/r0.1-proof-gated-core",
+  "claims": {
+    "historical_source_imported": false,
+    "product_implemented": false,
+    "external_runtime_integrated": false,
+    "component_adoption_certified": false,
+    "live_800_plus_census_certified": false,
+    "task5_disposition": "RECOLLECT_REQUIRED",
+    "c1_independent_review": "REPORTED_COMPLETE",
+    "c1_recovery_publication": "NOT_PROVEN_EXECUTED_IN_CURRENT_RUNTIME"
+  },
+  "promotion_policy": "Only CI and exact signed external artifacts may promote these claims."
+}
