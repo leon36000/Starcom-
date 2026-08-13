@@ -26,37 +26,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Decode and safely extract sealed source
+      - name: Reconstruct, verify and safely extract sealed source
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          chunks=(.bootstrap/source.b64.*)
-          if (( ${#chunks[@]} == 0 )); then
-            echo 'No bootstrap chunks found' >&2
-            exit 20
-          fi
-          cat "${chunks[@]}" > /tmp/starcom-source.b64
+          {
+            cat .bootstrap/source.b64.00
+            cat .bootstrap/source.b64.01
+            cat .bootstrap/correct/source.b64.02.*
+            cat .bootstrap/source.b64.03
+            cat .bootstrap/source.b64.04
+            cat .bootstrap/source.b64.05
+            cat .bootstrap/correct/source.b64.06.*
+            cat .bootstrap/correct/source.b64.07.*
+            cat .bootstrap/correct/source.b64.08.*
+          } | base64 --decode > /tmp/starcom-source.tar.gz
+          echo '5f7303b7c353f794e6a23717038f229b121764b02df5cbb7f8d9519c0516a248  /tmp/starcom-source.tar.gz' | sha256sum -c -
           python3 - <<'PY'
           from __future__ import annotations
 
-          import base64
-          import hashlib
-          import json
           import shutil
           import tarfile
           from pathlib import Path, PurePosixPath
 
-          encoded = Path('/tmp/starcom-source.b64').read_bytes()
-          try:
-              payload = base64.b64decode(encoded, validate=True)
-          except Exception as exc:
-              raise SystemExit(f'invalid base64 bootstrap payload: {exc}')
-
           payload_path = Path('/tmp/starcom-source.tar.gz')
-          payload_path.write_bytes(payload)
-          print(json.dumps({'payload_sha256': hashlib.sha256(payload).hexdigest(), 'payload_bytes': len(payload)}))
-
           extract_root = Path('/tmp/starcom-safe-extract')
           if extract_root.exists():
               shutil.rmtree(extract_root)
@@ -108,6 +101,7 @@ jobs:
           set -euo pipefail
           rm -rf .bootstrap
           rm -f .github/workflows/bootstrap-import.yml
+          rm -f .github/workflows/bootstrap-source.yml
 
       - name: Verify imported repository
         shell: bash
@@ -118,6 +112,7 @@ jobs:
           python3 scripts/verify_repo.py
           python3 -m unittest discover -s tests -v
           python3 -m compileall -q src tests scripts
+          sha256sum -c docs/proof/R0.1-FILE-HASHES.sha256
 
       - name: Commit verified source tree
         shell: bash
