@@ -1,0 +1,50 @@
+name: Export sealed STARCOM R0.1 source
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.head_ref == 'bootstrap/r0.1-proof-gated-core-v3'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact bootstrap branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: bootstrap/r0.1-proof-gated-core-v3
+          fetch-depth: 1
+
+      - name: Reconstruct and verify sealed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cat .bootstrap/source.b64.00
+            cat .bootstrap/source.b64.01
+            cat .bootstrap/correct/source.b64.02.*
+            cat .bootstrap/source.b64.03
+            cat .bootstrap/source.b64.04
+            cat .bootstrap/source.b64.05
+            cat .bootstrap/correct/source.b64.06.*
+            cat .bootstrap/correct/source.b64.07.*
+            cat .bootstrap/correct/source.b64.08.*
+          } | base64 --decode > starcom-r0.1-source.tar.gz
+          echo '5f7303b7c353f794e6a23717038f229b121764b02df5cbb7f8d9519c0516a248  starcom-r0.1-source.tar.gz' | sha256sum -c -
+
+      - name: Upload exact source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: starcom-r0.1-source
+          path: starcom-r0.1-source.tar.gz
+          if-no-files-found: error
+          retention-days: 7

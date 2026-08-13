@@ -1,0 +1,1 @@
+Trigger corrected STARCOM R0.1 one-shot bootstrap import on v2.
