@@ -1,0 +1,202 @@
+STARCOM R0.1 fresh verification evidence
+captured_at_utc=2026-08-13T08:55:56Z
+source_commit=2670aa02e236ff3a42447f8b0f3fc659c2c9cbff
+python=Python 3.13.5
+python_executable=/opt/pyvenv/bin/python3
+platform=Linux-6.18.35-x86_64-with-glibc2.41
+sqlite=3.46.1
+temporary_state=/tmp/tmp.WSly22laHa
+
+$ STARCOM_DB=<temporary>/starcom.sqlite3 PYTHONPATH=src:. python3 scripts/verify_repo.py
+===== compile stdout =====
+===== compile stderr =====
+===== compile exit=0 =====
+===== tests stdout =====
+===== tests stderr =====
+test_canonical_json_is_sorted_compact_and_unicode_preserving (test_canonical.CanonicalTests.test_canonical_json_is_sorted_compact_and_unicode_preserving) ... ok
+test_dataclass_and_uuid_are_normalized (test_canonical.CanonicalTests.test_dataclass_and_uuid_are_normalized) ... ok
+test_datetime_is_normalized_to_utc_microseconds (test_canonical.CanonicalTests.test_datetime_is_normalized_to_utc_microseconds) ... ok
+test_domain_error_has_stable_machine_payload (test_canonical.CanonicalTests.test_domain_error_has_stable_machine_payload) ... ok
+test_naive_datetime_is_rejected (test_canonical.CanonicalTests.test_naive_datetime_is_rejected) ... ok
+test_non_finite_float_is_rejected (test_canonical.CanonicalTests.test_non_finite_float_is_rejected) ... ok
+test_non_string_mapping_key_is_rejected (test_canonical.CanonicalTests.test_non_string_mapping_key_is_rejected) ... ok
+test_sha256_digest_hashes_exact_bytes_or_canonical_value (test_canonical.CanonicalTests.test_sha256_digest_hashes_exact_bytes_or_canonical_value) ... ok
+test_unsupported_types_are_rejected (test_canonical.CanonicalTests.test_unsupported_types_are_rejected) ... ok
+test_utc_now_has_canonical_utc_shape (test_canonical.CanonicalTests.test_utc_now_has_canonical_utc_shape) ... ok
+test_init_emits_json_and_creates_persistent_database (test_cli.CliContractTests.test_init_emits_json_and_creates_persistent_database) ... ok
+test_invalid_json_and_missing_entity_return_machine_readable_errors (test_cli.CliContractTests.test_invalid_json_and_missing_entity_return_machine_readable_errors) ... ok
+test_mission_commands_persist_across_processes_and_errors_are_structured (test_cli.CliContractTests.test_mission_commands_persist_across_processes_and_errors_are_structured) ... ok
+test_trust_and_proof_commands_are_exposed_as_json_contracts (test_cli.CliContractTests.test_trust_and_proof_commands_are_exposed_as_json_contracts) ... ok
+test_claim_is_exclusive_and_increments_attempt_count (test_durable.DurableOutboxTests.test_claim_is_exclusive_and_increments_attempt_count) ... ok
+test_enqueue_is_idempotent_for_same_payload (test_durable.DurableOutboxTests.test_enqueue_is_idempotent_for_same_payload) ... ok
+test_enqueue_rejects_same_effect_id_with_different_payload (test_durable.DurableOutboxTests.test_enqueue_rejects_same_effect_id_with_different_payload) ... ok
+test_expired_lease_is_recovered_and_can_be_claimed_again (test_durable.DurableOutboxTests.test_expired_lease_is_recovered_and_can_be_claimed_again) ... ok
+test_retry_exhaustion_is_terminal (test_durable.DurableOutboxTests.test_retry_exhaustion_is_terminal) ... ok
+test_retryable_failure_reschedules_effect (test_durable.DurableOutboxTests.test_retryable_failure_reschedules_effect) ... ok
+test_stale_worker_or_expired_lease_cannot_complete (test_durable.DurableOutboxTests.test_stale_worker_or_expired_lease_cannot_complete) ... ok
+test_success_requires_current_lease (test_durable.DurableOutboxTests.test_success_requires_current_lease) ... ok
+test_research_to_authorized_mission_to_certified_success (test_integration_flow.ProofGatedVerticalSliceTests.test_research_to_authorized_mission_to_certified_success) ... ok
+test_chained_appends_are_read_in_sequence (test_ledger.LedgerTests.test_chained_appends_are_read_in_sequence) ... ok
+test_database_blocks_normal_event_updates_and_deletes (test_ledger.LedgerTests.test_database_blocks_normal_event_updates_and_deletes) ... ok
+test_duplicate_event_id_is_rejected (test_ledger.LedgerTests.test_duplicate_event_id_is_rejected) ... ok
+test_expected_head_conflict_is_fail_closed (test_ledger.LedgerTests.test_expected_head_conflict_is_fail_closed) ... ok
+test_first_append_creates_genesis_link_and_receipt (test_ledger.LedgerTests.test_first_append_creates_genesis_link_and_receipt) ... ok
+test_verifier_accepts_multiple_valid_streams (test_ledger.LedgerTests.test_verifier_accepts_multiple_valid_streams) ... ok
+test_verifier_detects_payload_tampering (test_ledger.LedgerTests.test_verifier_detects_payload_tampering) ... ok
+test_verifier_detects_sequence_and_previous_hash_tampering (test_ledger.LedgerTests.test_verifier_detects_sequence_and_previous_hash_tampering) ... ok
+test_authorization_decision_cannot_be_reused (test_mission.MissionKernelTests.test_authorization_decision_cannot_be_reused) ... ok
+test_idempotent_replay_returns_same_receipt_without_new_event (test_mission.MissionKernelTests.test_idempotent_replay_returns_same_receipt_without_new_event) ... ok
+test_illegal_transition_is_rejected_without_writing_event (test_mission.MissionKernelTests.test_illegal_transition_is_rejected_without_writing_event) ... ok
+test_legal_path_reaches_running_with_explicit_authorizations (test_mission.MissionKernelTests.test_legal_path_reaches_running_with_explicit_authorizations) ... ok
+test_same_idempotency_key_with_different_payload_is_rejected (test_mission.MissionKernelTests.test_same_idempotency_key_with_different_payload_is_rejected) ... ok
+test_sensitive_transition_requires_matching_allowed_decision (test_mission.MissionKernelTests.test_sensitive_transition_requires_matching_allowed_decision) ... ok
+test_success_requires_valid_certificate_for_same_mission (test_mission.MissionKernelTests.test_success_requires_valid_certificate_for_same_mission) ... ok
+test_terminal_state_is_immutable (test_mission.MissionKernelTests.test_terminal_state_is_immutable) ... ok
+test_approval_requires_evidence (test_proof.ProofEngineTests.test_approval_requires_evidence) ... ok
+test_author_cannot_verify_own_claim (test_proof.ProofEngineTests.test_author_cannot_verify_own_claim) ... ok
+test_certificate_is_terminal_verifiable_and_idempotent (test_proof.ProofEngineTests.test_certificate_is_terminal_verifiable_and_idempotent) ... ok
+test_certificate_tampering_is_detected (test_proof.ProofEngineTests.test_certificate_tampering_is_detected) ... ok
+test_certificate_verifier_reports_malformed_evidence_metadata_json (test_proof.ProofEngineTests.test_certificate_verifier_reports_malformed_evidence_metadata_json) ... ok
+test_certifier_must_be_distinct_from_author_and_verifier (test_proof.ProofEngineTests.test_certifier_must_be_distinct_from_author_and_verifier) ... ok
+test_claim_creation_is_draft_and_ledgered (test_proof.ProofEngineTests.test_claim_creation_is_draft_and_ledgered) ... ok
+test_duplicate_evidence_id_is_rejected (test_proof.ProofEngineTests.test_duplicate_evidence_id_is_rejected) ... ok
+test_evidence_attachment_validates_digest_and_updates_status (test_proof.ProofEngineTests.test_evidence_attachment_validates_digest_and_updates_status) ... ok
+test_rejected_verification_prevents_certification (test_proof.ProofEngineTests.test_rejected_verification_prevents_certification) ... ok
+test_manifest_detects_missing_unlisted_and_tampered_files (test_repo_policy.RepositoryPolicyTests.test_manifest_detects_missing_unlisted_and_tampered_files) ... ok
+test_scanner_rejects_floating_build_dependencies (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_floating_build_dependencies) ... ok
+test_scanner_rejects_generated_database_files (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_generated_database_files) ... ok
+test_scanner_rejects_latest_github_action (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_latest_github_action) ... ok
+test_scanner_rejects_placeholder_tokens_in_production_code (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_placeholder_tokens_in_production_code) ... ok
+test_scanner_rejects_private_key_material (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_private_key_material) ... ok
+test_duplicate_request_key_is_idempotent_only_for_same_request (test_research.ResearchCampaignTests.test_duplicate_request_key_is_idempotent_only_for_same_request) ... ok
+test_normal_w1_to_w2_flow_verifies (test_research.ResearchCampaignTests.test_normal_w1_to_w2_flow_verifies) ... ok
+test_receipt_without_preexisting_attempt_is_rejected (test_research.ResearchCampaignTests.test_receipt_without_preexisting_attempt_is_rejected) ... ok
+test_success_receipt_requires_snapshot_and_linked_observation_and_cursor (test_research.ResearchCampaignTests.test_success_receipt_requires_snapshot_and_linked_observation_and_cursor) ... ok
+test_terminal_policy_block_needs_receipt_but_no_snapshot_artifacts (test_research.ResearchCampaignTests.test_terminal_policy_block_needs_receipt_but_no_snapshot_artifacts) ... ok
+test_verifier_detects_attempt_request_key_tampering_against_ledger (test_research.ResearchCampaignTests.test_verifier_detects_attempt_request_key_tampering_against_ledger) ... ok
+test_verifier_detects_attempt_timestamp_tampering_against_ledger (test_research.ResearchCampaignTests.test_verifier_detects_attempt_timestamp_tampering_against_ledger) ... ok
+test_verifier_detects_observation_data_tampering_against_ledger (test_research.ResearchCampaignTests.test_verifier_detects_observation_data_tampering_against_ledger) ... ok
+test_verifier_fails_closed_when_attempt_has_no_receipt (test_research.ResearchCampaignTests.test_verifier_fails_closed_when_attempt_has_no_receipt) ... ok
+test_verifier_reports_malformed_attempt_request_json (test_research.ResearchCampaignTests.test_verifier_reports_malformed_attempt_request_json) ... ok
+test_verifier_reports_malformed_cursor_value_json (test_research.ResearchCampaignTests.test_verifier_reports_malformed_cursor_value_json) ... ok
+test_wave_regression_is_rejected_before_attempt_creation (test_research.ResearchCampaignTests.test_wave_regression_is_rejected_before_attempt_creation) ... ok
+test_version_and_module_help (test_smoke.PackageSmokeTests.test_version_and_module_help) ... ok
+test_default_is_deny_and_decision_is_ledgered (test_trust.TrustPlaneTests.test_default_is_deny_and_decision_is_ledgered) ... ok
+test_expired_grant_does_not_authorize (test_trust.TrustPlaneTests.test_expired_grant_does_not_authorize) ... ok
+test_explicit_deny_overrides_allow_regardless_of_priority (test_trust.TrustPlaneTests.test_explicit_deny_overrides_allow_regardless_of_priority) ... ok
+test_grant_is_scoped_to_mission (test_trust.TrustPlaneTests.test_grant_is_scoped_to_mission) ... ok
+test_non_consuming_authorization_keeps_single_use_grant_available (test_trust.TrustPlaneTests.test_non_consuming_authorization_keeps_single_use_grant_available) ... ok
+test_rule_conditions_must_all_match (test_trust.TrustPlaneTests.test_rule_conditions_must_all_match) ... ok
+test_single_use_grant_is_consumed_atomically (test_trust.TrustPlaneTests.test_single_use_grant_is_consumed_atomically) ... ok
+test_verifier_reports_malformed_decision_request_json (test_trust.TrustPlaneTests.test_verifier_reports_malformed_decision_request_json) ... ok
+test_verifier_reports_malformed_matched_rule_ids_json (test_trust.TrustPlaneTests.test_verifier_reports_malformed_matched_rule_ids_json) ... ok
+test_wildcard_allow_rule_authorizes (test_trust.TrustPlaneTests.test_wildcard_allow_rule_authorizes) ... ok
+
+----------------------------------------------------------------------
+Ran 78 tests in 7.940s
+
+OK
+===== tests exit=0 =====
+===== secret-scan =====
+secret_scan findings=0
+===== manifest =====
+{"checked": 35, "mismatched": [], "missing": [], "ok": true, "unlisted": []}
+===== verification-summary =====
+{"ok":true,"python":"3.13.5","steps":[{"command":["/opt/pyvenv/bin/python3","-m","compileall","-q","src","scripts","tests"],"name":"compile","ok":true,"returncode":0},{"command":["/opt/pyvenv/bin/python3","-m","unittest","discover","-s","tests","-v"],"name":"tests","ok":true,"returncode":0},{"command":["in-process"],"name":"secret-scan","ok":true,"returncode":0},{"command":["in-process"],"name":"manifest","ok":true,"returncode":0}]}
+verify_repo_exit=0
+
+$ PYTHONPATH=src:. python3 -m unittest discover -s tests -v
+test_canonical_json_is_sorted_compact_and_unicode_preserving (test_canonical.CanonicalTests.test_canonical_json_is_sorted_compact_and_unicode_preserving) ... ok
+test_dataclass_and_uuid_are_normalized (test_canonical.CanonicalTests.test_dataclass_and_uuid_are_normalized) ... ok
+test_datetime_is_normalized_to_utc_microseconds (test_canonical.CanonicalTests.test_datetime_is_normalized_to_utc_microseconds) ... ok
+test_domain_error_has_stable_machine_payload (test_canonical.CanonicalTests.test_domain_error_has_stable_machine_payload) ... ok
+test_naive_datetime_is_rejected (test_canonical.CanonicalTests.test_naive_datetime_is_rejected) ... ok
+test_non_finite_float_is_rejected (test_canonical.CanonicalTests.test_non_finite_float_is_rejected) ... ok
+test_non_string_mapping_key_is_rejected (test_canonical.CanonicalTests.test_non_string_mapping_key_is_rejected) ... ok
+test_sha256_digest_hashes_exact_bytes_or_canonical_value (test_canonical.CanonicalTests.test_sha256_digest_hashes_exact_bytes_or_canonical_value) ... ok
+test_unsupported_types_are_rejected (test_canonical.CanonicalTests.test_unsupported_types_are_rejected) ... ok
+test_utc_now_has_canonical_utc_shape (test_canonical.CanonicalTests.test_utc_now_has_canonical_utc_shape) ... ok
+test_init_emits_json_and_creates_persistent_database (test_cli.CliContractTests.test_init_emits_json_and_creates_persistent_database) ... ok
+test_invalid_json_and_missing_entity_return_machine_readable_errors (test_cli.CliContractTests.test_invalid_json_and_missing_entity_return_machine_readable_errors) ... ok
+test_mission_commands_persist_across_processes_and_errors_are_structured (test_cli.CliContractTests.test_mission_commands_persist_across_processes_and_errors_are_structured) ... ok
+test_trust_and_proof_commands_are_exposed_as_json_contracts (test_cli.CliContractTests.test_trust_and_proof_commands_are_exposed_as_json_contracts) ... ok
+test_claim_is_exclusive_and_increments_attempt_count (test_durable.DurableOutboxTests.test_claim_is_exclusive_and_increments_attempt_count) ... ok
+test_enqueue_is_idempotent_for_same_payload (test_durable.DurableOutboxTests.test_enqueue_is_idempotent_for_same_payload) ... ok
+test_enqueue_rejects_same_effect_id_with_different_payload (test_durable.DurableOutboxTests.test_enqueue_rejects_same_effect_id_with_different_payload) ... ok
+test_expired_lease_is_recovered_and_can_be_claimed_again (test_durable.DurableOutboxTests.test_expired_lease_is_recovered_and_can_be_claimed_again) ... ok
+test_retry_exhaustion_is_terminal (test_durable.DurableOutboxTests.test_retry_exhaustion_is_terminal) ... ok
+test_retryable_failure_reschedules_effect (test_durable.DurableOutboxTests.test_retryable_failure_reschedules_effect) ... ok
+test_stale_worker_or_expired_lease_cannot_complete (test_durable.DurableOutboxTests.test_stale_worker_or_expired_lease_cannot_complete) ... ok
+test_success_requires_current_lease (test_durable.DurableOutboxTests.test_success_requires_current_lease) ... ok
+test_research_to_authorized_mission_to_certified_success (test_integration_flow.ProofGatedVerticalSliceTests.test_research_to_authorized_mission_to_certified_success) ... ok
+test_chained_appends_are_read_in_sequence (test_ledger.LedgerTests.test_chained_appends_are_read_in_sequence) ... ok
+test_database_blocks_normal_event_updates_and_deletes (test_ledger.LedgerTests.test_database_blocks_normal_event_updates_and_deletes) ... ok
+test_duplicate_event_id_is_rejected (test_ledger.LedgerTests.test_duplicate_event_id_is_rejected) ... ok
+test_expected_head_conflict_is_fail_closed (test_ledger.LedgerTests.test_expected_head_conflict_is_fail_closed) ... ok
+test_first_append_creates_genesis_link_and_receipt (test_ledger.LedgerTests.test_first_append_creates_genesis_link_and_receipt) ... ok
+test_verifier_accepts_multiple_valid_streams (test_ledger.LedgerTests.test_verifier_accepts_multiple_valid_streams) ... ok
+test_verifier_detects_payload_tampering (test_ledger.LedgerTests.test_verifier_detects_payload_tampering) ... ok
+test_verifier_detects_sequence_and_previous_hash_tampering (test_ledger.LedgerTests.test_verifier_detects_sequence_and_previous_hash_tampering) ... ok
+test_authorization_decision_cannot_be_reused (test_mission.MissionKernelTests.test_authorization_decision_cannot_be_reused) ... ok
+test_idempotent_replay_returns_same_receipt_without_new_event (test_mission.MissionKernelTests.test_idempotent_replay_returns_same_receipt_without_new_event) ... ok
+test_illegal_transition_is_rejected_without_writing_event (test_mission.MissionKernelTests.test_illegal_transition_is_rejected_without_writing_event) ... ok
+test_legal_path_reaches_running_with_explicit_authorizations (test_mission.MissionKernelTests.test_legal_path_reaches_running_with_explicit_authorizations) ... ok
+test_same_idempotency_key_with_different_payload_is_rejected (test_mission.MissionKernelTests.test_same_idempotency_key_with_different_payload_is_rejected) ... ok
+test_sensitive_transition_requires_matching_allowed_decision (test_mission.MissionKernelTests.test_sensitive_transition_requires_matching_allowed_decision) ... ok
+test_success_requires_valid_certificate_for_same_mission (test_mission.MissionKernelTests.test_success_requires_valid_certificate_for_same_mission) ... ok
+test_terminal_state_is_immutable (test_mission.MissionKernelTests.test_terminal_state_is_immutable) ... ok
+test_approval_requires_evidence (test_proof.ProofEngineTests.test_approval_requires_evidence) ... ok
+test_author_cannot_verify_own_claim (test_proof.ProofEngineTests.test_author_cannot_verify_own_claim) ... ok
+test_certificate_is_terminal_verifiable_and_idempotent (test_proof.ProofEngineTests.test_certificate_is_terminal_verifiable_and_idempotent) ... ok
+test_certificate_tampering_is_detected (test_proof.ProofEngineTests.test_certificate_tampering_is_detected) ... ok
+test_certificate_verifier_reports_malformed_evidence_metadata_json (test_proof.ProofEngineTests.test_certificate_verifier_reports_malformed_evidence_metadata_json) ... ok
+test_certifier_must_be_distinct_from_author_and_verifier (test_proof.ProofEngineTests.test_certifier_must_be_distinct_from_author_and_verifier) ... ok
+test_claim_creation_is_draft_and_ledgered (test_proof.ProofEngineTests.test_claim_creation_is_draft_and_ledgered) ... ok
+test_duplicate_evidence_id_is_rejected (test_proof.ProofEngineTests.test_duplicate_evidence_id_is_rejected) ... ok
+test_evidence_attachment_validates_digest_and_updates_status (test_proof.ProofEngineTests.test_evidence_attachment_validates_digest_and_updates_status) ... ok
+test_rejected_verification_prevents_certification (test_proof.ProofEngineTests.test_rejected_verification_prevents_certification) ... ok
+test_manifest_detects_missing_unlisted_and_tampered_files (test_repo_policy.RepositoryPolicyTests.test_manifest_detects_missing_unlisted_and_tampered_files) ... ok
+test_scanner_rejects_floating_build_dependencies (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_floating_build_dependencies) ... ok
+test_scanner_rejects_generated_database_files (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_generated_database_files) ... ok
+test_scanner_rejects_latest_github_action (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_latest_github_action) ... ok
+test_scanner_rejects_placeholder_tokens_in_production_code (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_placeholder_tokens_in_production_code) ... ok
+test_scanner_rejects_private_key_material (test_repo_policy.RepositoryPolicyTests.test_scanner_rejects_private_key_material) ... ok
+test_duplicate_request_key_is_idempotent_only_for_same_request (test_research.ResearchCampaignTests.test_duplicate_request_key_is_idempotent_only_for_same_request) ... ok
+test_normal_w1_to_w2_flow_verifies (test_research.ResearchCampaignTests.test_normal_w1_to_w2_flow_verifies) ... ok
+test_receipt_without_preexisting_attempt_is_rejected (test_research.ResearchCampaignTests.test_receipt_without_preexisting_attempt_is_rejected) ... ok
+test_success_receipt_requires_snapshot_and_linked_observation_and_cursor (test_research.ResearchCampaignTests.test_success_receipt_requires_snapshot_and_linked_observation_and_cursor) ... ok
+test_terminal_policy_block_needs_receipt_but_no_snapshot_artifacts (test_research.ResearchCampaignTests.test_terminal_policy_block_needs_receipt_but_no_snapshot_artifacts) ... ok
+test_verifier_detects_attempt_request_key_tampering_against_ledger (test_research.ResearchCampaignTests.test_verifier_detects_attempt_request_key_tampering_against_ledger) ... ok
+test_verifier_detects_attempt_timestamp_tampering_against_ledger (test_research.ResearchCampaignTests.test_verifier_detects_attempt_timestamp_tampering_against_ledger) ... ok
+test_verifier_detects_observation_data_tampering_against_ledger (test_research.ResearchCampaignTests.test_verifier_detects_observation_data_tampering_against_ledger) ... ok
+test_verifier_fails_closed_when_attempt_has_no_receipt (test_research.ResearchCampaignTests.test_verifier_fails_closed_when_attempt_has_no_receipt) ... ok
+test_verifier_reports_malformed_attempt_request_json (test_research.ResearchCampaignTests.test_verifier_reports_malformed_attempt_request_json) ... ok
+test_verifier_reports_malformed_cursor_value_json (test_research.ResearchCampaignTests.test_verifier_reports_malformed_cursor_value_json) ... ok
+test_wave_regression_is_rejected_before_attempt_creation (test_research.ResearchCampaignTests.test_wave_regression_is_rejected_before_attempt_creation) ... ok
+test_version_and_module_help (test_smoke.PackageSmokeTests.test_version_and_module_help) ... ok
+test_default_is_deny_and_decision_is_ledgered (test_trust.TrustPlaneTests.test_default_is_deny_and_decision_is_ledgered) ... ok
+test_expired_grant_does_not_authorize (test_trust.TrustPlaneTests.test_expired_grant_does_not_authorize) ... ok
+test_explicit_deny_overrides_allow_regardless_of_priority (test_trust.TrustPlaneTests.test_explicit_deny_overrides_allow_regardless_of_priority) ... ok
+test_grant_is_scoped_to_mission (test_trust.TrustPlaneTests.test_grant_is_scoped_to_mission) ... ok
+test_non_consuming_authorization_keeps_single_use_grant_available (test_trust.TrustPlaneTests.test_non_consuming_authorization_keeps_single_use_grant_available) ... ok
+test_rule_conditions_must_all_match (test_trust.TrustPlaneTests.test_rule_conditions_must_all_match) ... ok
+test_single_use_grant_is_consumed_atomically (test_trust.TrustPlaneTests.test_single_use_grant_is_consumed_atomically) ... ok
+test_verifier_reports_malformed_decision_request_json (test_trust.TrustPlaneTests.test_verifier_reports_malformed_decision_request_json) ... ok
+test_verifier_reports_malformed_matched_rule_ids_json (test_trust.TrustPlaneTests.test_verifier_reports_malformed_matched_rule_ids_json) ... ok
+test_wildcard_allow_rule_authorizes (test_trust.TrustPlaneTests.test_wildcard_allow_rule_authorizes) ... ok
+
+----------------------------------------------------------------------
+Ran 78 tests in 8.509s
+
+OK
+independent_unit_exit=0
+
+$ python3 scripts/secret_scan.py --root .
+secret_scan findings=0
+secret_scan_exit=0
+
+$ python3 scripts/build_manifest.py --root . --json
+{"checked":35,"mismatched":[],"missing":[],"ok":true,"unlisted":[]}
+manifest_exit=0
+
+aggregate_exit=0
