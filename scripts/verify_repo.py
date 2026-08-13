@@ -13,8 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.build_manifest import verify_manifest  # noqa: E402
+from scripts.build_manifest import parse_manifest, verify_manifest  # noqa: E402
 from scripts.secret_scan import scan_repository  # noqa: E402
+from scripts.text_style import inspect_text_style  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,25 @@ def main() -> int:
     print(f"secret_scan findings={len(secret_findings)}")
     steps.append(
         StepResult("secret-scan", not secret_findings, int(bool(secret_findings)), ("in-process",))
+    )
+
+    style_findings = []
+    style_paths = [*parse_manifest(ROOT / "MANIFEST.sha256"), "MANIFEST.sha256"]
+    for relative in style_paths:
+        raw = (ROOT / relative).read_bytes()
+        if b"\x00" in raw:
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        style_findings.extend(inspect_text_style(relative, text))
+    print("===== text-style =====")
+    for finding in style_findings:
+        print(json.dumps(asdict(finding), sort_keys=True))
+    print(f"text_style findings={len(style_findings)}")
+    steps.append(
+        StepResult("text-style", not style_findings, int(bool(style_findings)), ("in-process",))
     )
 
     manifest = verify_manifest(ROOT, ROOT / "MANIFEST.sha256")

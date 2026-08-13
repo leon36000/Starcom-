@@ -1,8 +1,8 @@
 # STARCOM Bootstrap and Proof-Gated Vertical Slice Design
 
-**Date:** 2026-08-13  
-**Repository:** `leon36000/Starcom-`  
-**Status:** approved by the owner's standing instruction to execute the existing STARCOM plan autonomously  
+**Date:** 2026-08-13
+**Repository:** `leon36000/Starcom-`
+**Status:** approved by the owner's standing instruction to execute the existing STARCOM plan autonomously
 **Scope:** reconstructive bootstrap because the canonical GitHub repository is empty and the complete historical source tree is not mounted in the current execution environment
 
 ## 1. Context and truth preservation
