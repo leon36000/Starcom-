@@ -1,0 +1,563 @@
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict, dataclass
+import json
+import os
+from pathlib import Path
+import platform
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
+
+from . import __version__
+from .canonical import canonical_json
+from .db import Database
+from .errors import StarcomError, ValidationError
+from .ledger import EventLedger
+from .mission import MissionKernel, MissionState
+from .proof import ProofEngine, VerificationVerdict
+from .research import ReceiptOutcome, ResearchCampaign
+from .trust import (
+    AuthorizationRequest,
+    PolicyEffect,
+    PolicyRule,
+    TrustPlane,
+)
+
+
+Handler = Callable[["Runtime", argparse.Namespace], tuple[Any, int]]
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """Argument parser that maps contract failures to STARCOM JSON errors."""
+
+    def error(self, message: str) -> None:
+        raise ValidationError("invalid command arguments", {"reason": message})
+
+
+@dataclass
+class Runtime:
+    database: Database
+    ledger: EventLedger
+    trust: TrustPlane
+    proof: ProofEngine
+    missions: MissionKernel
+    research: ResearchCampaign
+
+    @classmethod
+    def open(cls, path: str) -> "Runtime":
+        database = Database(path)
+        try:
+            database.initialize()
+            ledger = EventLedger(database)
+            trust = TrustPlane(database, ledger)
+            proof = ProofEngine(database, ledger)
+            missions = MissionKernel(database, ledger, trust, proof)
+            research = ResearchCampaign(database, ledger)
+            return cls(database, ledger, trust, proof, missions, research)
+        except BaseException:
+            database.close()
+            raise
+
+    def close(self) -> None:
+        self.database.close()
+
+
+def _database_path(raw: str) -> str:
+    if raw == ":memory:":
+        return raw
+    return str(Path(raw).expanduser().resolve())
+
+
+def _json_value(raw: str, field_name: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            f"{field_name} must contain valid JSON",
+            {"line": exc.lineno, "column": exc.colno},
+        ) from exc
+
+
+def _json_object(raw: str, field_name: str) -> Mapping[str, Any]:
+    value = _json_value(raw, field_name)
+    if not isinstance(value, dict):
+        raise ValidationError(f"{field_name} must contain a JSON object")
+    return value
+
+
+def _verification_payload(value: Any) -> dict[str, Any]:
+    payload = asdict(value)
+    payload["ok"] = bool(value.ok)
+    return payload
+
+
+def _emit_success(result: Any) -> None:
+    print(canonical_json({"ok": True, "result": result}))
+
+
+def _emit_error(error: StarcomError) -> None:
+    print(canonical_json(error.to_dict()), file=sys.stderr)
+
+
+def _init(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return {
+        "database": _database_path(args.db),
+        "initialized": True,
+        "version": __version__,
+    }, 0
+
+
+def _doctor(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.ledger.verify()
+    result = {
+        "component": "starcom-core",
+        "version": __version__,
+        "python": platform.python_version(),
+        "database": _database_path(args.db),
+        "product_complete": False,
+        "external_runtime_integrated": False,
+        "component_adoption": False,
+        "live_800_plus_census_certified": False,
+        "task5_disposition": "RECOLLECT_REQUIRED",
+        "ledger": _verification_payload(verification),
+    }
+    return result, 0 if verification.ok else 3
+
+
+def _ledger_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.ledger.verify(args.stream_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _mission_create(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.missions.create(
+        mission_id=args.mission_id,
+        title=args.title,
+        objective=args.objective,
+        owner=args.owner,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _mission_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.missions.get(args.mission_id), 0
+
+
+def _mission_transition(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.missions.transition(
+        args.mission_id,
+        MissionState(args.to),
+        actor=args.actor,
+        idempotency_key=args.idempotency_key,
+        reason=args.reason,
+        authorization_decision_id=args.authorization_decision_id,
+        certificate_id=args.certificate_id,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _research_create(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.research.create(
+        campaign_id=args.campaign_id,
+        name=args.name,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _research_begin_attempt(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.research.begin_attempt(
+        args.campaign_id,
+        attempt_id=args.attempt_id,
+        wave=args.wave,
+        request_key=args.request_key,
+        source_id=args.source_id,
+        request=_json_object(args.request_json, "request_json"),
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _research_receipt(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.research.record_receipt(
+        args.attempt_id,
+        receipt_id=args.receipt_id,
+        outcome=ReceiptOutcome(args.outcome),
+        status_code=args.status_code,
+        snapshot_digest=args.snapshot_digest,
+        metadata=_json_object(args.metadata_json, "metadata_json"),
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _research_observation(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.research.record_observation(
+        args.attempt_id,
+        observation_id=args.observation_id,
+        snapshot_digest=args.snapshot_digest,
+        content_digest=args.content_digest,
+        data=_json_object(args.data_json, "data_json"),
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _research_cursor(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.research.checkpoint_cursor(
+        args.campaign_id,
+        cursor_id=args.cursor_id,
+        wave=args.wave,
+        cursor_key=args.cursor_key,
+        value=_json_value(args.value_json, "value_json"),
+        attempt_id=args.attempt_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _research_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.research.verify(args.campaign_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _trust_add_rule(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    rule = PolicyRule(
+        rule_id=args.rule_id,
+        effect=PolicyEffect(args.effect),
+        subject=args.subject,
+        action=args.action,
+        resource=args.resource,
+        conditions=_json_object(args.conditions_json, "conditions_json"),
+        priority=args.priority,
+    )
+    runtime.trust.add_rule(rule, actor=args.actor, occurred_at=args.occurred_at)
+    return rule, 0
+
+
+def _trust_issue_grant(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    runtime.trust.issue_grant(
+        grant_id=args.grant_id,
+        subject=args.subject,
+        action=args.action,
+        resource=args.resource,
+        mission_id=args.mission_id,
+        expires_at=args.expires_at,
+        single_use=args.single_use,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    )
+    return {
+        "grant_id": args.grant_id,
+        "mission_id": args.mission_id,
+        "single_use": args.single_use,
+    }, 0
+
+
+def _trust_authorize(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    request = AuthorizationRequest(
+        subject=args.subject,
+        action=args.action,
+        resource=args.resource,
+        mission_id=args.mission_id,
+        context=_json_object(args.context_json, "context_json"),
+    )
+    decision = runtime.trust.authorize(
+        request,
+        now=args.at,
+        consume=not args.no_consume,
+    )
+    return decision, 0 if decision.allowed else 4
+
+
+def _trust_verify_decision(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.trust.verify_decision(args.decision_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _proof_create_claim(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.proof.create_claim(
+        claim_id=args.claim_id,
+        subject_type=args.subject_type,
+        subject_id=args.subject_id,
+        statement=args.statement,
+        author=args.author,
+        policy_version=args.policy_version,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _proof_get_claim(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.proof.get_claim(args.claim_id), 0
+
+
+def _proof_attach_evidence(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.proof.attach_evidence(
+        args.claim_id,
+        evidence_id=args.evidence_id,
+        kind=args.kind,
+        uri=args.uri,
+        digest=args.digest,
+        metadata=_json_object(args.metadata_json, "metadata_json"),
+        attached_by=args.attached_by,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _proof_verify_claim(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.proof.verify_claim(
+        args.claim_id,
+        verifier=args.verifier,
+        verdict=VerificationVerdict(args.verdict),
+        notes=args.notes,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _proof_certify_claim(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.proof.certify_claim(
+        args.claim_id,
+        certifier=args.certifier,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _proof_verify_certificate(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.proof.verify_certificate(args.certificate_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _set_handler(parser: argparse.ArgumentParser, handler: Handler) -> None:
+    parser.set_defaults(handler=handler)
+
+
+def _add_occurred_at(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--occurred-at")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = JsonArgumentParser(
+        prog="starcom",
+        description="STARCOM proof-gated mission core",
+    )
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument(
+        "--db",
+        default=os.environ.get("STARCOM_DB", "starcom.sqlite3"),
+        help="SQLite database path (default: STARCOM_DB or ./starcom.sqlite3)",
+    )
+    top = parser.add_subparsers(dest="command")
+
+    init_parser = top.add_parser("init", help="initialize the local STARCOM database")
+    _set_handler(init_parser, _init)
+
+    doctor = top.add_parser("doctor", help="report the local R0.1 runtime state")
+    _set_handler(doctor, _doctor)
+
+    ledger = top.add_parser("ledger", help="verify immutable ledger chains")
+    ledger_commands = ledger.add_subparsers(dest="ledger_command", required=True)
+    ledger_verify = ledger_commands.add_parser("verify")
+    ledger_verify.add_argument("--stream-id")
+    _set_handler(ledger_verify, _ledger_verify)
+
+    mission = top.add_parser("mission", help="manage proof-gated missions")
+    mission_commands = mission.add_subparsers(dest="mission_command", required=True)
+    mission_create = mission_commands.add_parser("create")
+    mission_create.add_argument("--mission-id")
+    mission_create.add_argument("--title", required=True)
+    mission_create.add_argument("--objective", required=True)
+    mission_create.add_argument("--owner", required=True)
+    _add_occurred_at(mission_create)
+    _set_handler(mission_create, _mission_create)
+
+    mission_get = mission_commands.add_parser("get")
+    mission_get.add_argument("--mission-id", required=True)
+    _set_handler(mission_get, _mission_get)
+
+    mission_transition = mission_commands.add_parser("transition")
+    mission_transition.add_argument("--mission-id", required=True)
+    mission_transition.add_argument("--to", required=True, choices=[state.value for state in MissionState])
+    mission_transition.add_argument("--actor", required=True)
+    mission_transition.add_argument("--idempotency-key", required=True)
+    mission_transition.add_argument("--reason", default="")
+    mission_transition.add_argument("--authorization-decision-id")
+    mission_transition.add_argument("--certificate-id")
+    _add_occurred_at(mission_transition)
+    _set_handler(mission_transition, _mission_transition)
+
+    research = top.add_parser("research", help="manage pre-request research evidence")
+    research_commands = research.add_subparsers(dest="research_command", required=True)
+    research_create = research_commands.add_parser("create")
+    research_create.add_argument("--campaign-id")
+    research_create.add_argument("--name", required=True)
+    research_create.add_argument("--actor", required=True)
+    _add_occurred_at(research_create)
+    _set_handler(research_create, _research_create)
+
+    begin_attempt = research_commands.add_parser("begin-attempt")
+    begin_attempt.add_argument("--campaign-id", required=True)
+    begin_attempt.add_argument("--attempt-id")
+    begin_attempt.add_argument("--wave", type=int, required=True)
+    begin_attempt.add_argument("--request-key", required=True)
+    begin_attempt.add_argument("--source-id", required=True)
+    begin_attempt.add_argument("--request-json", required=True)
+    begin_attempt.add_argument("--actor", required=True)
+    _add_occurred_at(begin_attempt)
+    _set_handler(begin_attempt, _research_begin_attempt)
+
+    receipt = research_commands.add_parser("receipt")
+    receipt.add_argument("--attempt-id", required=True)
+    receipt.add_argument("--receipt-id")
+    receipt.add_argument("--outcome", required=True, choices=[item.value for item in ReceiptOutcome])
+    receipt.add_argument("--status-code", type=int)
+    receipt.add_argument("--snapshot-digest")
+    receipt.add_argument("--metadata-json", default="{}")
+    receipt.add_argument("--actor", required=True)
+    _add_occurred_at(receipt)
+    _set_handler(receipt, _research_receipt)
+
+    observation = research_commands.add_parser("observation")
+    observation.add_argument("--attempt-id", required=True)
+    observation.add_argument("--observation-id")
+    observation.add_argument("--snapshot-digest", required=True)
+    observation.add_argument("--content-digest", required=True)
+    observation.add_argument("--data-json", default="{}")
+    observation.add_argument("--actor", required=True)
+    _add_occurred_at(observation)
+    _set_handler(observation, _research_observation)
+
+    cursor = research_commands.add_parser("cursor")
+    cursor.add_argument("--campaign-id", required=True)
+    cursor.add_argument("--cursor-id")
+    cursor.add_argument("--wave", type=int, required=True)
+    cursor.add_argument("--cursor-key", required=True)
+    cursor.add_argument("--value-json", required=True)
+    cursor.add_argument("--attempt-id", required=True)
+    cursor.add_argument("--actor", required=True)
+    _add_occurred_at(cursor)
+    _set_handler(cursor, _research_cursor)
+
+    research_verify = research_commands.add_parser("verify")
+    research_verify.add_argument("--campaign-id", required=True)
+    _set_handler(research_verify, _research_verify)
+
+    trust = top.add_parser("trust", help="manage default-deny policy and decisions")
+    trust_commands = trust.add_subparsers(dest="trust_command", required=True)
+    add_rule = trust_commands.add_parser("add-rule")
+    add_rule.add_argument("--rule-id", required=True)
+    add_rule.add_argument("--effect", required=True, choices=[item.value for item in PolicyEffect])
+    add_rule.add_argument("--subject", required=True)
+    add_rule.add_argument("--action", required=True)
+    add_rule.add_argument("--resource", required=True)
+    add_rule.add_argument("--conditions-json", default="{}")
+    add_rule.add_argument("--priority", type=int, default=0)
+    add_rule.add_argument("--actor", required=True)
+    _add_occurred_at(add_rule)
+    _set_handler(add_rule, _trust_add_rule)
+
+    issue_grant = trust_commands.add_parser("issue-grant")
+    issue_grant.add_argument("--grant-id", required=True)
+    issue_grant.add_argument("--subject", required=True)
+    issue_grant.add_argument("--action", required=True)
+    issue_grant.add_argument("--resource", required=True)
+    issue_grant.add_argument("--mission-id")
+    issue_grant.add_argument("--expires-at", required=True)
+    issue_grant.add_argument("--single-use", action="store_true")
+    issue_grant.add_argument("--actor", required=True)
+    _add_occurred_at(issue_grant)
+    _set_handler(issue_grant, _trust_issue_grant)
+
+    authorize = trust_commands.add_parser("authorize")
+    authorize.add_argument("--subject", required=True)
+    authorize.add_argument("--action", required=True)
+    authorize.add_argument("--resource", required=True)
+    authorize.add_argument("--mission-id")
+    authorize.add_argument("--context-json", default="{}")
+    authorize.add_argument("--at")
+    authorize.add_argument("--no-consume", action="store_true")
+    _set_handler(authorize, _trust_authorize)
+
+    verify_decision = trust_commands.add_parser("verify-decision")
+    verify_decision.add_argument("--decision-id", required=True)
+    _set_handler(verify_decision, _trust_verify_decision)
+
+    proof = top.add_parser("proof", help="manage claims, evidence, and certificates")
+    proof_commands = proof.add_subparsers(dest="proof_command", required=True)
+    create_claim = proof_commands.add_parser("create-claim")
+    create_claim.add_argument("--claim-id")
+    create_claim.add_argument("--subject-type", required=True)
+    create_claim.add_argument("--subject-id", required=True)
+    create_claim.add_argument("--statement", required=True)
+    create_claim.add_argument("--author", required=True)
+    create_claim.add_argument("--policy-version", required=True)
+    _add_occurred_at(create_claim)
+    _set_handler(create_claim, _proof_create_claim)
+
+    get_claim = proof_commands.add_parser("get-claim")
+    get_claim.add_argument("--claim-id", required=True)
+    _set_handler(get_claim, _proof_get_claim)
+
+    attach_evidence = proof_commands.add_parser("attach-evidence")
+    attach_evidence.add_argument("--claim-id", required=True)
+    attach_evidence.add_argument("--evidence-id")
+    attach_evidence.add_argument("--kind", required=True)
+    attach_evidence.add_argument("--uri", required=True)
+    attach_evidence.add_argument("--digest", required=True)
+    attach_evidence.add_argument("--metadata-json", default="{}")
+    attach_evidence.add_argument("--attached-by", required=True)
+    _add_occurred_at(attach_evidence)
+    _set_handler(attach_evidence, _proof_attach_evidence)
+
+    verify_claim = proof_commands.add_parser("verify-claim")
+    verify_claim.add_argument("--claim-id", required=True)
+    verify_claim.add_argument("--verifier", required=True)
+    verify_claim.add_argument("--verdict", required=True, choices=[item.value for item in VerificationVerdict])
+    verify_claim.add_argument("--notes", required=True)
+    _add_occurred_at(verify_claim)
+    _set_handler(verify_claim, _proof_verify_claim)
+
+    certify_claim = proof_commands.add_parser("certify-claim")
+    certify_claim.add_argument("--claim-id", required=True)
+    certify_claim.add_argument("--certifier", required=True)
+    _add_occurred_at(certify_claim)
+    _set_handler(certify_claim, _proof_certify_claim)
+
+    verify_certificate = proof_commands.add_parser("verify-certificate")
+    verify_certificate.add_argument("--certificate-id", required=True)
+    _set_handler(verify_certificate, _proof_verify_certificate)
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    runtime: Runtime | None = None
+    try:
+        args = parser.parse_args(argv)
+        if not hasattr(args, "handler"):
+            parser.print_help()
+            return 0
+        args.db = _database_path(args.db)
+        runtime = Runtime.open(args.db)
+        result, exit_code = args.handler(runtime, args)
+        _emit_success(result)
+        return exit_code
+    except StarcomError as exc:
+        _emit_error(exc)
+        return 2
+    except Exception as exc:  # no tracebacks across the machine-readable CLI boundary
+        if os.environ.get("STARCOM_DEBUG") == "1":
+            raise
+        _emit_error(
+            StarcomError(
+                "INTERNAL_ERROR",
+                "unexpected internal failure",
+                {"type": type(exc).__name__},
+            )
+        )
+        return 1
+    finally:
+        if runtime is not None:
+            runtime.close()

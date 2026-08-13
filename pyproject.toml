@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools==82.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "starcom-core"
+version = "0.1.0"
+description = "STARCOM proof-gated mission core"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "STARCOM" }]
+dependencies = []
+
+[project.scripts]
+starcom = "starcom.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
