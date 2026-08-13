@@ -569,4 +569,3 @@ class TrustPlane:
             if not self.ledger.verify(str(ledger_row["stream_id"])).ok:
                 defects.append("DECISION_LEDGER_CHAIN_INVALID")
         return DecisionVerification(decision_id, tuple(dict.fromkeys(defects)))
-
