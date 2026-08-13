@@ -1,33 +1,30 @@
-name: STARCOM one-shot verified bootstrap import
+name: Export sealed STARCOM R0.1 source
 
 on:
-  workflow_dispatch:
-  push:
+  pull_request:
     branches:
-      - bootstrap/r0.1-proof-gated-core
-      - bootstrap/r0.1-proof-gated-core-v2
-    paths:
-      - '.bootstrap/**'
-      - '.github/workflows/bootstrap-import.yml'
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
-  contents: write
-
-concurrency:
-  group: starcom-bootstrap-import-${{ github.ref }}
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  import:
+  export:
+    if: github.head_ref == 'bootstrap/r0.1-proof-gated-core-v3'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - name: Checkout bootstrap branch
+      - name: Checkout exact bootstrap branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
+          ref: bootstrap/r0.1-proof-gated-core-v3
+          fetch-depth: 1
 
-      - name: Reconstruct, verify and safely extract sealed source
+      - name: Reconstruct and verify sealed source
         shell: bash
         run: |
           set -euo pipefail
@@ -41,90 +38,13 @@ jobs:
             cat .bootstrap/correct/source.b64.06.*
             cat .bootstrap/correct/source.b64.07.*
             cat .bootstrap/correct/source.b64.08.*
-          } | base64 --decode > /tmp/starcom-source.tar.gz
-          echo '5f7303b7c353f794e6a23717038f229b121764b02df5cbb7f8d9519c0516a248  /tmp/starcom-source.tar.gz' | sha256sum -c -
-          python3 - <<'PY'
-          from __future__ import annotations
+          } | base64 --decode > starcom-r0.1-source.tar.gz
+          echo '5f7303b7c353f794e6a23717038f229b121764b02df5cbb7f8d9519c0516a248  starcom-r0.1-source.tar.gz' | sha256sum -c -
 
-          import shutil
-          import tarfile
-          from pathlib import Path, PurePosixPath
-
-          payload_path = Path('/tmp/starcom-source.tar.gz')
-          extract_root = Path('/tmp/starcom-safe-extract')
-          if extract_root.exists():
-              shutil.rmtree(extract_root)
-          extract_root.mkdir(parents=True)
-
-          total = 0
-          with tarfile.open(payload_path, mode='r:*') as archive:
-              members = archive.getmembers()
-              if not members:
-                  raise SystemExit('empty source archive')
-              for member in members:
-                  path = PurePosixPath(member.name)
-                  if path.is_absolute() or '..' in path.parts:
-                      raise SystemExit(f'unsafe archive path: {member.name}')
-                  if member.issym() or member.islnk() or member.isdev():
-                      raise SystemExit(f'unsupported archive member: {member.name}')
-                  total += max(member.size, 0)
-                  if total > 100 * 1024 * 1024:
-                      raise SystemExit('archive exceeds 100 MiB uncompressed limit')
-              archive.extractall(extract_root, members=members, filter='data')
-
-          children = list(extract_root.iterdir())
-          source_root = children[0] if len(children) == 1 and children[0].is_dir() else extract_root
-          required = [source_root / 'pyproject.toml', source_root / 'src' / 'starcom', source_root / 'scripts' / 'verify_repo.py']
-          missing = [str(p.relative_to(source_root)) for p in required if not p.exists()]
-          if missing:
-              raise SystemExit(f'bootstrap archive lacks required paths: {missing}')
-
-          destination = Path.cwd()
-          protected = {'.git', '.bootstrap'}
-          for child in source_root.iterdir():
-              if child.name in protected:
-                  continue
-              target = destination / child.name
-              if target.exists():
-                  if target.is_dir() and not target.is_symlink():
-                      shutil.rmtree(target)
-                  else:
-                      target.unlink()
-              if child.is_dir():
-                  shutil.copytree(child, target)
-              else:
-                  shutil.copy2(child, target)
-          PY
-
-      - name: Remove bootstrap transport before verification
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .bootstrap
-          rm -f .github/workflows/bootstrap-import.yml
-          rm -f .github/workflows/bootstrap-source.yml
-
-      - name: Verify imported repository
-        shell: bash
-        env:
-          PYTHONPATH: src:.
-        run: |
-          set -euo pipefail
-          python3 scripts/verify_repo.py
-          python3 -m unittest discover -s tests -v
-          python3 -m compileall -q src tests scripts
-          sha256sum -c docs/proof/R0.1-FILE-HASHES.sha256
-
-      - name: Commit verified source tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'STARCOM Bootstrap Bot'
-          git config user.email 'starcom-bootstrap-bot@users.noreply.github.com'
-          git add -A
-          if git diff --cached --quiet; then
-            echo 'No import changes to commit.'
-            exit 0
-          fi
-          git commit -m 'bootstrap: import verified R0.1 proof-gated mission core'
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+      - name: Upload exact source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: starcom-r0.1-source
+          path: starcom-r0.1-source.tar.gz
+          if-no-files-found: error
+          retention-days: 7
