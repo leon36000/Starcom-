@@ -1,0 +1,106 @@
+name: Publish verified STARCOM R0.4 temporal integrity
+
+on:
+  push:
+    branches:
+      - control/r0.4-temporal-20260813
+    paths:
+      - '.control/r04-temporal/**'
+      - '.github/workflows/publish-r0.4-temporal.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-r0.4-temporal-publication
+  cancel-in-progress: false
+
+jobs:
+  tdd-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout temporal control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/r0.4-temporal-20260813
+          fetch-depth: 0
+
+      - name: Preserve staged increment outside the worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-r04
+          cp .control/r04-temporal/* /tmp/starcom-r04/
+          sha256sum /tmp/starcom-r04/*
+
+      - name: Establish clean feature branch from canonical main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git switch -C feat/r0.4-temporal-integrity origin/main
+
+      - name: Prove temporal integrity tests start RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          cp /tmp/starcom-r04/test_recollection_temporal.py tests/test_recollection_temporal.py
+          set +e
+          python3 -m unittest discover -s tests -p 'test_recollection_temporal.py' -v > /tmp/starcom-r04-red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-r04-red.log
+          if [ "$red_status" -eq 0 ]; then
+            echo 'Expected temporal integrity tests to expose the pre-patch defects.' >&2
+            exit 1
+          fi
+          grep -Eq 'FAIL|ERROR' /tmp/starcom-r04-red.log
+
+      - name: Implement strict monotonic temporal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-r04/apply_temporal_patch.py
+          python3 /tmp/starcom-r04/tighten_executor_timestamp.py
+          cp /tmp/starcom-r04/test_recollection_temporal.py tests/test_recollection_temporal.py
+          cp /tmp/starcom-r04/2026-08-13-r04-temporal-integrity-design.md docs/superpowers/specs/
+          cp /tmp/starcom-r04/2026-08-13-r04-temporal-integrity-plan.md docs/superpowers/plans/
+          cp /tmp/starcom-r04/R0.4-TEMPORAL-INTEGRITY-STATUS.md docs/status/
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Run fresh focused and complete verification
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_recollection_temporal.py' -v
+          python3 - <<'PY'
+          import unittest
+          count = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={count}')
+          if count != 138:
+              raise SystemExit(f'expected 138 tests, found {count}')
+          PY
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified R0.4 feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git commit -m 'feat: enforce monotonic recollection evidence time'
+          git push origin 'HEAD:refs/heads/feat/r0.4-temporal-integrity'
