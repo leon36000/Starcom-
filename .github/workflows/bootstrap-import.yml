@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - bootstrap/r0.1-proof-gated-core
+      - bootstrap/r0.1-proof-gated-core-v2
     paths:
       - '.bootstrap/**'
       - '.github/workflows/bootstrap-import.yml'
