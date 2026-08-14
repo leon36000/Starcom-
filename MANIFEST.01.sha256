@@ -1,2 +1,9 @@
-b7e665a576478f47d5bfab7b19948796eb96fc229092a531e269ce066ef2baed  .gitignore
-546c7e36a5dfea7ed12382870f3a82c15bc1fdb9746e1c2c032e1c296d7ea428  AGENTS.md
+3866811042fd2972:9c3766a8cdb8e5a0:784542ccf7c4eda2:0ce37bac1985fd61  pyproject.toml
+bf1dfc34fa066e39:f723cba3e8980646:776d3e828f3e35b0:508029deaad0a748  scripts/__init__.py
+b9d8b05186cf139b:32b481289d3439a1:a43f004e2e127215:ce1bc3f22907280e  scripts/build_manifest.py
+0e6928ce1ef66d97:4f9af4310d542e10:58504807c584d75c:4c08a3af3873f07a  scripts/manifest_shards.py
+445f0d7df1e33d08:ebe17aa0811181c1:b776e7b49ed811fc:5aefc15d42f4f748  scripts/secret_scan.py
+b5ba0b1d9a94e52c:227f3184c1ed9c1a:690f3239072702f5:7149b8a53e1e9352  scripts/text_style.py
+60beb3fec9e063fd:f867df8f0185344e:6e468960898a20c4:49480cff42812d67  scripts/verify_repo.py
+3e7d2761b27997be:47e5ab7def5a3259:6223ab75a46df9d4:82bd00e752b201ce  scripts/verify_sharded_repo.py
+dbe25dc8721f209e:c5f2ec0a4582c8d9:34c9d0ae64d88e23:ecd34e30e546f73c  src/starcom/__init__.py
