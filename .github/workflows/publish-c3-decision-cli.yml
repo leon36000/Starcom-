@@ -1,0 +1,118 @@
+name: Publish verified STARCOM C3 decision CLI
+
+on:
+  push:
+    branches:
+      - control/c3-decision-cli-20260814
+    paths:
+      - '.control/c3-decision-cli/**'
+      - '.github/workflows/publish-c3-decision-cli.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-decision-cli-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-decision-cli-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-decision-cli
+          cp .control/c3-decision-cli/apply_patch.py /tmp/starcom-c3-decision-cli/
+          sha256sum /tmp/starcom-c3-decision-cli/apply_patch.py
+
+      - name: Establish exact RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c3-decision-cli d932d7f2029ccf80b8ad486d254b205f05ef189f
+          test "$(git rev-parse HEAD)" = "d932d7f2029ccf80b8ad486d254b205f05ef189f"
+
+      - name: Re-prove exact C3 decision CLI RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -m unittest discover -s tests -p 'test_qualification_decision_cli.py' -v > /tmp/starcom-c3-decision-cli/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-c3-decision-cli/red.log
+          test "$red_status" -ne 0
+          grep -Fq 'Ran 4 tests' /tmp/starcom-c3-decision-cli/red.log
+          grep -Fq 'FAILED (failures=4)' /tmp/starcom-c3-decision-cli/red.log
+          test "$(grep -c '^FAIL:' /tmp/starcom-c3-decision-cli/red.log || true)" -eq 4
+          test "$(grep -c '^ERROR:' /tmp/starcom-c3-decision-cli/red.log || true)" -eq 0
+          grep -Fq "invalid choice: 'c3-decision'" /tmp/starcom-c3-decision-cli/red.log
+          for test_name in \
+            test_snapshot_admit_get_and_verify_preserve_exact_bytes \
+            test_modified_payload_and_missing_files_fail_without_decision \
+            test_later_evidence_makes_verify_exit_three \
+            test_no_adoption_subcommand_exists; do
+            grep -Fq "$test_name" /tmp/starcom-c3-decision-cli/red.log
+          done
+
+      - name: Apply thin CLI patch and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c3-decision-cli/apply_patch.py
+          test "$(grep -c '^def _c3_decision_snapshot' src/starcom/cli.py)" -eq 1
+          test "$(grep -c '^def _c3_decision_admit' src/starcom/cli.py)" -eq 1
+          test "$(grep -c '^def _c3_decision_get' src/starcom/cli.py)" -eq 1
+          test "$(grep -c '^def _c3_decision_verify' src/starcom/cli.py)" -eq 1
+          test "$(grep -c 'add_parser("adopt")' src/starcom/cli.py || true)" -eq 0
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_qualification_decision_cli.py' -v
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_qualification_decision_cli.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 4:
+              raise SystemExit(f'expected 4 C3 decision CLI tests, found {focused}')
+          if total != 200:
+              raise SystemExit(f'expected 200 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_qualification_decision_cli.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'feat: expose exact-byte C3 decision CLI'
+          git push origin 'HEAD:refs/heads/fix/c3-decision-cli'
+          git rev-parse HEAD
