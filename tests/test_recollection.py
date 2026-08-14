@@ -10,7 +10,7 @@ from starcom.continuity import ContinuityService, IncidentStatus
 from starcom.db import Database
 from starcom.errors import ConflictError, IntegrityError, StateTransitionError, ValidationError
 from starcom.ledger import EventLedger
-from starcom.recollection import C2RecollectionService
+from starcom.recollection import C2RecollectionRecord, C2RecollectionService
 from starcom.research import ResearchCampaign
 from starcom.trust import AuthorizationRequest, PolicyEffect, PolicyRule, TrustPlane
 
@@ -148,7 +148,7 @@ class C2RecollectionGateTests(unittest.TestCase):
         verification = self.continuity.verify_incident("task5")
         self.assertTrue(verification.ok, verification.defects)
 
-    def start(self, **overrides: object):
+    def start(self, **overrides: object) -> C2RecollectionRecord:
         values: dict[str, object] = {
             "recollection_id": "recollection-c2",
             "incident_id": "task5",
@@ -159,6 +159,24 @@ class C2RecollectionGateTests(unittest.TestCase):
         }
         values.update(overrides)
         return self.c2.start(**values)  # type: ignore[arg-type]
+
+    @staticmethod
+    def binding_payload(record: C2RecollectionRecord) -> dict[str, object]:
+        return {
+            "recollection_id": record.recollection_id,
+            "incident_id": record.incident_id,
+            "campaign_id": record.campaign_id,
+            "minimum_identity_target": record.minimum_identity_target,
+            "c1_required_status": "RECOVERY_PUBLISHED_RECOLLECT_REQUIRED",
+            "pre_binding_attempt_count": 0,
+        }
+
+    def repoint_binding(self, record: C2RecollectionRecord, event_id: str, record_hash: str) -> None:
+        self.db.connection.execute("DROP TRIGGER c2_recollections_no_update")
+        self.db.connection.execute(
+            "UPDATE c2_recollections SET ledger_event_id = ?, ledger_hash = ? WHERE recollection_id = ?",
+            (event_id, record_hash, record.recollection_id),
+        )
 
     def test_generic_research_remains_available_before_c1(self) -> None:
         attempt = self.research.begin_attempt(
@@ -240,31 +258,103 @@ class C2RecollectionGateTests(unittest.TestCase):
     def test_verifier_detects_repointed_binding_event_stream(self) -> None:
         self.publish_c1_recovery()
         record = self.start()
-        payload = {
-            "recollection_id": record.recollection_id,
-            "incident_id": record.incident_id,
-            "campaign_id": record.campaign_id,
-            "minimum_identity_target": record.minimum_identity_target,
-            "c1_required_status": "RECOVERY_PUBLISHED_RECOLLECT_REQUIRED",
-            "pre_binding_attempt_count": 0,
-        }
         forged = self.ledger.append(
             "continuity:c2:shadow",
             "C2_RECOLLECTION_STARTED",
-            payload,
+            self.binding_payload(record),
             actor="owner",
             occurred_at=T4,
         )
-        self.db.connection.execute("DROP TRIGGER c2_recollections_no_update")
-        self.db.connection.execute(
-            "UPDATE c2_recollections SET ledger_event_id = ?, ledger_hash = ? WHERE recollection_id = ?",
-            (forged.event_id, forged.record_hash, record.recollection_id),
-        )
+        self.repoint_binding(record, forged.event_id, forged.record_hash)
 
         verification = self.c2.verify(record.recollection_id)
 
         self.assertFalse(verification.ok)
         self.assertIn("C2_LEDGER_STREAM_MISMATCH", verification.defects)
+
+    def test_verifier_detects_repointed_binding_event_kind(self) -> None:
+        self.publish_c1_recovery()
+        record = self.start()
+        forged = self.ledger.append(
+            f"continuity:c2:{record.recollection_id}",
+            "C2_RECOLLECTION_REBOUND",
+            self.binding_payload(record),
+            actor="owner",
+            occurred_at=T4,
+        )
+        self.repoint_binding(record, forged.event_id, forged.record_hash)
+
+        verification = self.c2.verify(record.recollection_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("C2_LEDGER_KIND_MISMATCH", verification.defects)
+
+    def test_verifier_detects_repointed_binding_event_actor(self) -> None:
+        self.publish_c1_recovery()
+        record = self.start()
+        forged = self.ledger.append(
+            f"continuity:c2:{record.recollection_id}",
+            "C2_RECOLLECTION_STARTED",
+            self.binding_payload(record),
+            actor="intruder",
+            occurred_at=T4,
+        )
+        self.repoint_binding(record, forged.event_id, forged.record_hash)
+
+        verification = self.c2.verify(record.recollection_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("C2_LEDGER_ACTOR_MISMATCH", verification.defects)
+
+    def test_verifier_detects_repointed_binding_event_timestamp(self) -> None:
+        self.publish_c1_recovery()
+        record = self.start()
+        forged = self.ledger.append(
+            f"continuity:c2:{record.recollection_id}",
+            "C2_RECOLLECTION_STARTED",
+            self.binding_payload(record),
+            actor="owner",
+            occurred_at=T5,
+        )
+        self.repoint_binding(record, forged.event_id, forged.record_hash)
+
+        verification = self.c2.verify(record.recollection_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("C2_LEDGER_TIMESTAMP_MISMATCH", verification.defects)
+
+    def test_verifier_detects_repointed_binding_event_payload(self) -> None:
+        self.publish_c1_recovery()
+        record = self.start()
+        payload = self.binding_payload(record)
+        payload["minimum_identity_target"] = 801
+        forged = self.ledger.append(
+            f"continuity:c2:{record.recollection_id}",
+            "C2_RECOLLECTION_STARTED",
+            payload,
+            actor="owner",
+            occurred_at=T4,
+        )
+        self.repoint_binding(record, forged.event_id, forged.record_hash)
+
+        verification = self.c2.verify(record.recollection_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("C2_LEDGER_PAYLOAD_MISMATCH", verification.defects)
+
+    def test_verifier_detects_binding_ledger_hash_tampering(self) -> None:
+        self.publish_c1_recovery()
+        record = self.start()
+        self.db.connection.execute("DROP TRIGGER c2_recollections_no_update")
+        self.db.connection.execute(
+            "UPDATE c2_recollections SET ledger_hash = ? WHERE recollection_id = ?",
+            ("0" * 64, record.recollection_id),
+        )
+
+        verification = self.c2.verify(record.recollection_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("C2_LEDGER_HASH_MISMATCH", verification.defects)
 
 
 if __name__ == "__main__":
