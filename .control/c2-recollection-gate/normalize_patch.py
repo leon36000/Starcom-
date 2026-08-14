@@ -19,7 +19,7 @@ def main() -> int:
     source = PATH.read_text(encoding="utf-8")
     source = replace_exact(
         source,
-        "from .continuity import ContinuityService\\nfrom .continuity_types import IncidentStatus",
+        "from .continuity import ContinuityService\nfrom .continuity_types import IncidentStatus",
         "from .continuity import ContinuityService, IncidentStatus",
         expected=1,
         label="IncidentStatus import",
