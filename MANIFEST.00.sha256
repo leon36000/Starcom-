@@ -1,1 +1,9 @@
-74d5cd22b068fc70503599e8560f193660a0f849147cfa88df302ffd820adfda  .github/workflows/ci.yml
+8e8468aafc8436f8:61db01d3d662f8a6:4a0ac69edcb756c6:2b3bb54e6e872e80  .github/workflows/ci-sharded.yml
+b7e665a576478f47:d5bfab7b19948796:eb96fc229092a531:e269ce066ef2baed  .gitignore
+546c7e36a5dfea7e:d12382870f3a82c1:5bc1fdb9746e1c2c:032e1c296d7ea428  AGENTS.md
+7851642ee71d4141:ce1e226bc88b3a75:eb788e02197a7637:d80711ee5f7b3b99  README.md
+6856c25ca9ce7f4a:5ba3284cdb96320b:2a3b79508ba26ac1:31e83fe16bf0968b  docs/status/CANONICAL-STATE.md
+ed86688c178bc10d:943ad96fc2abcfee:082200823f01dce2:088d034cea9ee7bc  docs/superpowers/plans/2026-08-13-bootstrap-proof-gated-vertical-slice.md
+2384bf802d2255d0:7cdf90a6a09e7543:f2aba9d193230c07:329b6e86b59c296f  docs/superpowers/plans/2026-08-13-c1-recovery-publication.md
+bbdb6bc71627dd18:5274242345262b82:d91a2eaae98d4ac8:e2be33853d0435fa  docs/superpowers/specs/2026-08-13-bootstrap-proof-gated-vertical-slice-design.md
+fb40c6a152f6cf75:6bd05a8dd588bf55:cf08ed6d77833aea:3dedafa1063fed34  docs/superpowers/specs/2026-08-13-c1-recovery-publication-design.md
