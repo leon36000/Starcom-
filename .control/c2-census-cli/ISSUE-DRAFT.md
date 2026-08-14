@@ -1,0 +1,1 @@
+Expose C2 census register/get/verify/assess through a thin CLI without implicit C1, C2, research campaign, attempt, receipt, observation or cursor creation.
