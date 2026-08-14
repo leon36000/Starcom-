@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from . import __version__
+from .adoption import C3AdoptionService
 from .canonical import canonical_json
 from .census import C2CensusService
 from .certification import C2CertificationService
@@ -58,6 +59,7 @@ class Runtime:
     qualification: QualificationLab
     c3: C3QualificationGate
     c3_decision: C3DecisionService
+    adoption: C3AdoptionService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -94,6 +96,14 @@ class Runtime:
                 c3,
                 qualification,
             )
+            adoption = C3AdoptionService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                c3_decision,
+                qualification,
+            )
             return cls(
                 database,
                 ledger,
@@ -108,6 +118,7 @@ class Runtime:
                 qualification,
                 c3,
                 c3_decision,
+                adoption,
             )
         except BaseException:
             database.close()
@@ -533,6 +544,33 @@ def _c3_decision_verify(
     runtime: Runtime, args: argparse.Namespace
 ) -> tuple[Any, int]:
     verification = runtime.c3_decision.verify_decision(args.decision_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _adoption_prepare(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.adoption.prepare(
+        args.c3_run_id,
+        _json_object(args.rollback_plan_json, "rollback_plan_json"),
+    ), 0
+
+
+def _adoption_authorize(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.adoption.authorize_adoption(
+        args.adoption_id,
+        c3_run_id=args.c3_run_id,
+        authorization_decision_id=args.authorization_decision_id,
+        rollback_plan=_json_object(args.rollback_plan_json, "rollback_plan_json"),
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _adoption_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.adoption.get_adoption(args.adoption_id), 0
+
+
+def _adoption_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.adoption.verify_adoption(args.adoption_id)
     return _verification_payload(verification), 0 if verification.ok else 3
 
 
@@ -981,6 +1019,38 @@ def build_parser() -> argparse.ArgumentParser:
     c3_decision_verify = c3_decision_commands.add_parser("verify")
     c3_decision_verify.add_argument("--decision-id", required=True)
     _set_handler(c3_decision_verify, _c3_decision_verify)
+
+    adoption = top.add_parser(
+        "adoption",
+        help="authorize one selected C3 candidate without executing adoption",
+    )
+    adoption_commands = adoption.add_subparsers(
+        dest="adoption_command", required=True
+    )
+
+    adoption_prepare = adoption_commands.add_parser("prepare")
+    adoption_prepare.add_argument("--c3-run-id", required=True)
+    adoption_prepare.add_argument("--rollback-plan-json", required=True)
+    _set_handler(adoption_prepare, _adoption_prepare)
+
+    adoption_authorize = adoption_commands.add_parser("authorize")
+    adoption_authorize.add_argument("--adoption-id", required=True)
+    adoption_authorize.add_argument("--c3-run-id", required=True)
+    adoption_authorize.add_argument(
+        "--authorization-decision-id", required=True
+    )
+    adoption_authorize.add_argument("--rollback-plan-json", required=True)
+    adoption_authorize.add_argument("--actor", required=True)
+    _add_occurred_at(adoption_authorize)
+    _set_handler(adoption_authorize, _adoption_authorize)
+
+    adoption_get = adoption_commands.add_parser("get")
+    adoption_get.add_argument("--adoption-id", required=True)
+    _set_handler(adoption_get, _adoption_get)
+
+    adoption_verify = adoption_commands.add_parser("verify")
+    adoption_verify.add_argument("--adoption-id", required=True)
+    _set_handler(adoption_verify, _adoption_verify)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
