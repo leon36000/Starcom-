@@ -21,6 +21,7 @@ from .ledger import EventLedger
 from .mission import MissionKernel, MissionState
 from .proof import ProofEngine, VerificationVerdict
 from .qualification import QualificationArtifactKind, QualificationLab
+from .qualification_decision import C3DecisionService
 from .qualification_gate import C3QualificationGate
 from .recollection import C2RecollectionService
 from .research import ReceiptOutcome, ResearchCampaign
@@ -56,6 +57,7 @@ class Runtime:
     certification: C2CertificationService
     qualification: QualificationLab
     c3: C3QualificationGate
+    c3_decision: C3DecisionService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -84,6 +86,14 @@ class Runtime:
                 certification,
                 qualification,
             )
+            c3_decision = C3DecisionService(
+                database,
+                ledger,
+                continuity,
+                certification,
+                c3,
+                qualification,
+            )
             return cls(
                 database,
                 ledger,
@@ -97,6 +107,7 @@ class Runtime:
                 certification,
                 qualification,
                 c3,
+                c3_decision,
             )
         except BaseException:
             database.close()
@@ -473,6 +484,55 @@ def _c3_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
 
 def _c3_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
     verification = runtime.c3.verify(args.c3_run_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _c3_decision_snapshot(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    snapshot = runtime.c3_decision.snapshot(args.c3_run_id)
+    return {
+        "c3_run_id": snapshot.c3_run_id,
+        "qualification_run_id": snapshot.qualification_run_id,
+        "certificate_id": snapshot.certificate_id,
+        "qualification_head_hash": snapshot.qualification_head_hash,
+        "candidate_count": snapshot.candidate_count,
+        "evaluation_count": snapshot.evaluation_count,
+        "candidate_set_digest": snapshot.candidate_set_digest,
+        "evaluation_set_digest": snapshot.evaluation_set_digest,
+        "latest_evidence_at": snapshot.latest_evidence_at,
+        "candidate_artifact_ids": [
+            str(member["artifact_id"]) for member in snapshot.candidates
+        ],
+        "evaluation_artifact_ids": [
+            str(member["artifact_id"]) for member in snapshot.evaluations
+        ],
+    }, 0
+
+
+def _c3_decision_admit(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    payload = _read_file_bytes(args.payload_file, "payload_file")
+    signature = _read_file_bytes(args.signature_file, "signature_file")
+    return runtime.c3_decision.admit_decision(
+        args.c3_run_id,
+        args.key_id,
+        payload,
+        signature,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _c3_decision_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.c3_decision.get_decision(args.decision_id), 0
+
+
+def _c3_decision_verify(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    verification = runtime.c3_decision.verify_decision(args.decision_id)
     return _verification_payload(verification), 0 if verification.ok else 3
 
 
@@ -892,6 +952,35 @@ def build_parser() -> argparse.ArgumentParser:
     c3_verify = c3_commands.add_parser("verify")
     c3_verify.add_argument("--c3-run-id", required=True)
     _set_handler(c3_verify, _c3_verify)
+
+    c3_decision = top.add_parser(
+        "c3-decision",
+        help="manage exact-byte independently signed C3 qualification decisions",
+    )
+    c3_decision_commands = c3_decision.add_subparsers(
+        dest="c3_decision_command", required=True
+    )
+
+    c3_decision_snapshot = c3_decision_commands.add_parser("snapshot")
+    c3_decision_snapshot.add_argument("--c3-run-id", required=True)
+    _set_handler(c3_decision_snapshot, _c3_decision_snapshot)
+
+    c3_decision_admit = c3_decision_commands.add_parser("admit")
+    c3_decision_admit.add_argument("--c3-run-id", required=True)
+    c3_decision_admit.add_argument("--key-id", required=True)
+    c3_decision_admit.add_argument("--payload-file", required=True)
+    c3_decision_admit.add_argument("--signature-file", required=True)
+    c3_decision_admit.add_argument("--actor", required=True)
+    _add_occurred_at(c3_decision_admit)
+    _set_handler(c3_decision_admit, _c3_decision_admit)
+
+    c3_decision_get = c3_decision_commands.add_parser("get")
+    c3_decision_get.add_argument("--decision-id", required=True)
+    _set_handler(c3_decision_get, _c3_decision_get)
+
+    c3_decision_verify = c3_decision_commands.add_parser("verify")
+    c3_decision_verify.add_argument("--decision-id", required=True)
+    _set_handler(c3_decision_verify, _c3_decision_verify)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
