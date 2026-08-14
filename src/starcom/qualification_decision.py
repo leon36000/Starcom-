@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import sqlite3
 from typing import Any, Mapping
 
 from .certification import C2CertificationService
@@ -87,6 +88,13 @@ class C3DecisionService:
         self.certification = certification
         self.c3 = c3
         self.qualification = qualification
+
+    def _snapshot_from_connection(
+        self,
+        connection: sqlite3.Connection,
+        c3_run_id: str,
+    ) -> C3DecisionSnapshot:
+        raise StateTransitionError("C3 decision authority is not implemented")
 
     def snapshot(self, c3_run_id: str) -> C3DecisionSnapshot:
         raise StateTransitionError("C3 decision authority is not implemented")
