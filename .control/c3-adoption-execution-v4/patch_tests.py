@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-PATH = Path("tests/test_adoption_execution.py")
+EXECUTION_PATH = Path("tests/test_adoption_execution.py")
+DURABLE_PATH = Path("tests/test_durable_transaction.py")
 
 
 def replace_once(source: str, old: str, new: str, label: str) -> str:
@@ -15,8 +16,8 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
     return source.replace(old, new, 1)
 
 
-def main() -> int:
-    source = PATH.read_text(encoding="utf-8")
+def patch_execution_tests() -> None:
+    source = EXECUTION_PATH.read_text(encoding="utf-8")
     source = replace_once(
         source,
         "EffectStatus.IN_PROGRESS",
@@ -33,8 +34,52 @@ def main() -> int:
 ''',
         "real durable lease recovery result",
     )
-    PATH.write_text(source, encoding="utf-8")
-    print("aligned C3 execution tests with the authoritative durable outbox API")
+    EXECUTION_PATH.write_text(source, encoding="utf-8")
+
+
+def patch_durable_tests() -> None:
+    source = DURABLE_PATH.read_text(encoding="utf-8")
+    source = replace_once(
+        source,
+        '''        self.assertEqual(
+            self.ledger.read("durable:effect:effect-transaction-rollback"),
+            (),
+        )
+''',
+        '''        ledger_count = int(
+            self.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events WHERE stream_id = ?",
+                ("durable:effect:effect-transaction-rollback",),
+            ).fetchone()[0]
+        )
+        self.assertEqual(ledger_count, 0)
+''',
+        "rolled-back ledger event count",
+    )
+    source = replace_once(
+        source,
+        '''        self.assertEqual(
+            len(self.ledger.read("durable:effect:effect-transaction-idempotent")),
+            1,
+        )
+''',
+        '''        ledger_count = int(
+            self.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events WHERE stream_id = ?",
+                ("durable:effect:effect-transaction-idempotent",),
+            ).fetchone()[0]
+        )
+        self.assertEqual(ledger_count, 1)
+''',
+        "idempotent ledger event count",
+    )
+    DURABLE_PATH.write_text(source, encoding="utf-8")
+
+
+def main() -> int:
+    patch_execution_tests()
+    patch_durable_tests()
+    print("aligned C3 execution tests with authoritative durable and ledger APIs")
     return 0
 
 
