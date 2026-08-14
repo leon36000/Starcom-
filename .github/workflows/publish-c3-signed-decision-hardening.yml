@@ -1,0 +1,117 @@
+name: Publish hardened STARCOM C3 signed decision authority
+
+on:
+  push:
+    branches:
+      - control/c3-signed-decision-hardening-20260814
+    paths:
+      - '.control/c3-signed-decision-hardening/**'
+      - '.github/workflows/publish-c3-signed-decision-hardening.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-signed-decision-hardening-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-signed-decision-hardening-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-decision-hardening
+          cp .control/c3-signed-decision-hardening/apply_patch.py /tmp/starcom-c3-decision-hardening/
+          sha256sum /tmp/starcom-c3-decision-hardening/apply_patch.py
+
+      - name: Establish exact hardening RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c3-signed-decision-final 1307b031deb0a337ad29bb3dec46f14064761a83
+          test "$(git rev-parse HEAD)" = "1307b031deb0a337ad29bb3dec46f14064761a83"
+
+      - name: Re-prove exact chronology and verifier RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -m unittest discover -s tests -p 'test_qualification_decision_hardening.py' -v > /tmp/starcom-c3-decision-hardening/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-c3-decision-hardening/red.log
+          test "$red_status" -ne 0
+          grep -Fq 'Ran 5 tests' /tmp/starcom-c3-decision-hardening/red.log
+          grep -Fq 'FAILED (failures=1, errors=2)' /tmp/starcom-c3-decision-hardening/red.log
+          test "$(grep -c '^FAIL:' /tmp/starcom-c3-decision-hardening/red.log || true)" -eq 1
+          test "$(grep -c '^ERROR:' /tmp/starcom-c3-decision-hardening/red.log || true)" -eq 2
+          grep -Fq 'test_admission_timestamp_cannot_predate_signed_decision' /tmp/starcom-c3-decision-hardening/red.log
+          grep -Fq 'test_verifier_fails_closed_on_malformed_frozen_evidence_timestamp' /tmp/starcom-c3-decision-hardening/red.log
+          grep -Fq 'test_verifier_fails_closed_when_payload_and_decision_time_are_corrupt' /tmp/starcom-c3-decision-hardening/red.log
+          grep -Fq 'test_trust_root_is_rechecked_inside_admission_transaction (test_qualification_decision_hardening.C3DecisionHardeningTests.test_trust_root_is_rechecked_inside_admission_transaction) ... ok' /tmp/starcom-c3-decision-hardening/red.log
+          grep -Fq 'test_c3_is_rechecked_inside_admission_transaction (test_qualification_decision_hardening.C3DecisionHardeningTests.test_c3_is_rechecked_inside_admission_transaction) ... ok' /tmp/starcom-c3-decision-hardening/red.log
+
+      - name: Apply bounded hardening and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c3-decision-hardening/apply_patch.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify hardened authority and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_qualification_decision_hardening.py' -v
+          python3 -m unittest discover -s tests -p 'test_qualification_decision.py' -v
+          python3 - <<'PY'
+          import unittest
+          hardening = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_qualification_decision_hardening.py'
+          ).countTestCases()
+          core = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_qualification_decision.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'hardening_count={hardening}')
+          print(f'core_decision_count={core}')
+          print(f'test_count={total}')
+          if hardening != 5:
+              raise SystemExit(f'expected 5 hardening tests, found {hardening}')
+          if core != 11:
+              raise SystemExit(f'expected 11 core decision tests, found {core}')
+          if total != 192:
+              raise SystemExit(f'expected 192 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_qualification_decision*.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Publish final verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'test: harden C3 decision chronology and verifier containment'
+          git push origin 'HEAD:refs/heads/fix/c3-signed-decision-final'
+          git rev-parse HEAD
