@@ -82,6 +82,8 @@ jobs:
           set -euo pipefail
           cp /tmp/starcom-c3-decision/qualification_decision.py src/starcom/qualification_decision.py
           test "$(grep -c '^class C3DecisionService:' src/starcom/qualification_decision.py)" -eq 1
+          sed -i 's/[[:space:]]\+$//' docs/superpowers/specs/2026-08-14-c3-signed-decision-design.md
+          test -z "$(grep -n '[[:space:]]$' docs/superpowers/specs/2026-08-14-c3-signed-decision-design.md || true)"
           python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
 
       - name: Verify focused GREEN and complete repository
