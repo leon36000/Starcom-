@@ -36,14 +36,14 @@ jobs:
           python3 .control/c3-adoption-cli/normalize_patch.py
           sha256sum /tmp/starcom-c3-adoption-cli/apply_patch.py
 
-      - name: Establish exact corrected RED baseline
+      - name: Establish exact final RED baseline
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'STARCOM Verification Bot'
           git config user.email 'starcom-verification-bot@users.noreply.github.com'
-          git switch -C fix/c3-adoption-cli 9742a9d87607450eda9cd009537ec8ba4bc63de5
-          test "$(git rev-parse HEAD)" = "9742a9d87607450eda9cd009537ec8ba4bc63de5"
+          git switch -C fix/c3-adoption-cli b5026c8b7ad6afd1ea2c3f43557a82624d638738
+          test "$(git rev-parse HEAD)" = "b5026c8b7ad6afd1ea2c3f43557a82624d638738"
 
       - name: Re-prove exact C3 adoption CLI RED
         shell: bash
