@@ -134,6 +134,42 @@ class ContinuityAuthorizationVerificationTests(unittest.TestCase):
             verification.defects,
         )
 
+    def test_verifier_detects_trust_root_ledger_event_binding_tampering(self) -> None:
+        root = self.db.connection.execute(
+            "SELECT * FROM continuity_trust_roots WHERE key_id = ?",
+            ("reviewer-1",),
+        ).fetchone()
+        self.assertIsNotNone(root)
+        assert root is not None
+        forged = self.ledger.append(
+            "continuity:trust-root:reviewer-1",
+            "CONTINUITY_TRUST_ROOT_REBOUND",
+            {
+                "key_id": "reviewer-1",
+                "fingerprint_sha256": str(root["fingerprint_sha256"]),
+                "decision_id": str(root["decision_id"]),
+            },
+            actor="owner",
+            occurred_at=T2,
+        )
+        self.db.connection.execute("DROP TRIGGER continuity_trust_roots_no_update")
+        self.db.connection.execute(
+            """
+            UPDATE continuity_trust_roots
+            SET ledger_event_id = ?, ledger_hash = ?
+            WHERE key_id = ?
+            """,
+            (forged.event_id, forged.record_hash, "reviewer-1"),
+        )
+
+        verification = self.service.verify_incident("task5")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            "TRUST_ROOT:reviewer-1_LEDGER_KIND_MISMATCH",
+            verification.defects,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
