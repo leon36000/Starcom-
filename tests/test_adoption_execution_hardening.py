@@ -54,6 +54,7 @@ class C3AdoptionExecutionHardeningTests(unittest.TestCase):
             self.runtime.adoption,
             self.outbox,
         )
+        self.registry = execution_fixture.DeterministicEnabledRegistry()
         self.helper = execution_fixture.C3AdoptionExecutionTests(
             methodName="test_prepare_is_deterministic_and_has_no_side_effect"
         )
@@ -71,7 +72,9 @@ class C3AdoptionExecutionHardeningTests(unittest.TestCase):
     def test_executor_identity_mismatch_is_terminal_no_effect(self) -> None:
         requested = self.admitted()
         executor = WrongExecutor("success")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         completed = worker.process_next(worker_id="worker-wrong", now=E3)
 
@@ -104,7 +107,9 @@ class C3AdoptionExecutionHardeningTests(unittest.TestCase):
             ("0" * 64, requested.execution_id),
         )
         executor = execution_fixture.DeterministicExecutor("success")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         completed = worker.process_next(worker_id="worker-dirty", now=E3)
 

@@ -21,6 +21,7 @@ from .errors import (
     StateTransitionError,
     ValidationError,
 )
+from .executor_registry import C3ExecutorRegistry
 from .ledger import EventLedger
 from .trust import AuthorizationDecision, TrustPlane
 
@@ -141,6 +142,8 @@ class C3AdoptionExecutionVerification:
 
 class C3AdoptionExecutor(Protocol):
     executor_id: str
+    implementation_version: str
+    implementation_digest: str
 
     def validate(self, request: C3AdoptionExecutionRecord) -> None: ...
 
@@ -156,6 +159,8 @@ class C3AdoptionExecutor(Protocol):
 
 class DisabledC3AdoptionExecutor:
     executor_id = "disabled"
+    implementation_version = "0.0.0-disabled"
+    implementation_digest = "0" * 64
 
     def validate(self, request: C3AdoptionExecutionRecord) -> None:
         raise StateTransitionError("C3 adoption execution is disabled")
@@ -1410,10 +1415,12 @@ class C3AdoptionExecutionWorker:
         self,
         service: C3AdoptionExecutionService,
         outbox: DurableOutbox,
+        registry: C3ExecutorRegistry,
         executor: C3AdoptionExecutor | None = None,
     ) -> None:
         self.service = service
         self.outbox = outbox
+        self.registry = registry
         self.executor = executor or DisabledC3AdoptionExecutor()
 
     @staticmethod
@@ -1429,6 +1436,101 @@ class C3AdoptionExecutionWorker:
             "exception_type": type(error).__name__,
             "message": str(error)[:4096],
         }
+
+    def _terminalize_gate_failure(
+        self,
+        lease: EffectLease,
+        request: C3AdoptionExecutionRecord,
+        *,
+        worker_id: str,
+        phase: str,
+        receipt: Mapping[str, Any],
+        error: object,
+        rollback_uncertain_effect: bool,
+        now: str,
+    ) -> C3AdoptionExecutionRecord:
+        if request.status is not C3AdoptionExecutionStatus.RUNNING:
+            return self._terminalize(
+                lease,
+                request,
+                worker_id=worker_id,
+                status=C3AdoptionExecutionStatus.FAILED_NO_EFFECT,
+                effect_started=False,
+                execution_receipt=dict(receipt),
+                rollback_receipt=None,
+                error=error,
+                now=now,
+            )
+
+        execution_receipt = {
+            **dict(receipt),
+            "phase": f"{phase}-recovered-running-uncertain",
+            "prior_effect_state": "UNCERTAIN",
+        }
+        if not rollback_uncertain_effect:
+            rollback_receipt = {
+                "executor_id": request.executor_id,
+                "idempotency_key": request.idempotency_key,
+                "succeeded": False,
+                "rollback_attempted": False,
+                "reason": "correct rollback authority unavailable",
+            }
+            return self._terminalize(
+                lease,
+                request,
+                worker_id=worker_id,
+                status=C3AdoptionExecutionStatus.ROLLBACK_FAILED,
+                effect_started=True,
+                execution_receipt=execution_receipt,
+                rollback_receipt=rollback_receipt,
+                error=error,
+                now=now,
+            )
+
+        try:
+            rollback = self.executor.rollback(
+                request,
+                None,
+                f"registry gate failed during recovered RUNNING state: {error}",
+            )
+        except Exception as rollback_error:
+            rollback = C3RollbackResult(
+                succeeded=False,
+                restored_state_digest=None,
+                receipt=self._exception_receipt(
+                    request,
+                    "registry-gate-rollback-exception",
+                    rollback_error,
+                ),
+                error=str(rollback_error),
+            )
+        if rollback.restored_state_digest is not None:
+            self.service._digest(
+                rollback.restored_state_digest,
+                "restored_state_digest",
+            )
+        rollback_receipt = {
+            "executor_id": request.executor_id,
+            "idempotency_key": request.idempotency_key,
+            "succeeded": rollback.succeeded,
+            "restored_state_digest": rollback.restored_state_digest,
+            "adapter_receipt": dict(rollback.receipt),
+        }
+        return self._terminalize(
+            lease,
+            request,
+            worker_id=worker_id,
+            status=(
+                C3AdoptionExecutionStatus.FAILED_ROLLED_BACK
+                if rollback.succeeded
+                else C3AdoptionExecutionStatus.ROLLBACK_FAILED
+            ),
+            effect_started=True,
+            execution_receipt=execution_receipt,
+            rollback_receipt=rollback_receipt,
+            error=rollback.error or error,
+            now=now,
+        )
 
     def _terminalize(
         self,
@@ -1496,36 +1598,71 @@ class C3AdoptionExecutionWorker:
             return request
         verification = self.service.verify_execution(execution_id)
         if not verification.ok:
-            return self._terminalize(
+            return self._terminalize_gate_failure(
                 lease,
                 request,
                 worker_id=worker_id,
-                status=C3AdoptionExecutionStatus.FAILED_NO_EFFECT,
-                effect_started=False,
-                execution_receipt={
+                phase="pre-effect-verification",
+                receipt={
                     "phase": "pre-effect-verification",
                     "defects": list(verification.defects),
                     "idempotency_key": request.idempotency_key,
                 },
-                rollback_receipt=None,
                 error="pre-effect execution verification failed",
+                rollback_uncertain_effect=False,
                 now=now,
             )
         if request.executor_id != self.executor.executor_id:
-            return self._terminalize(
+            return self._terminalize_gate_failure(
                 lease,
                 request,
                 worker_id=worker_id,
-                status=C3AdoptionExecutionStatus.FAILED_NO_EFFECT,
-                effect_started=False,
-                execution_receipt={
+                phase="executor-selection",
+                receipt={
                     "phase": "executor-selection",
                     "expected_executor_id": request.executor_id,
                     "observed_executor_id": self.executor.executor_id,
                     "idempotency_key": request.idempotency_key,
                 },
-                rollback_receipt=None,
                 error="executor identity mismatch",
+                rollback_uncertain_effect=False,
+                now=now,
+            )
+        sandbox_profile = str(request.execution_plan["sandbox_profile"])
+        requires_network = bool(request.execution_plan["requires_network"])
+        try:
+            self.registry.attest(
+                request.executor_id,
+                implementation_version=self.executor.implementation_version,
+                implementation_digest=self.executor.implementation_digest,
+                sandbox_profile=sandbox_profile,
+                requires_network=requires_network,
+            )
+        except (
+            IntegrityError,
+            NotFoundError,
+            StateTransitionError,
+            ValidationError,
+        ) as registry_error:
+            return self._terminalize_gate_failure(
+                lease,
+                request,
+                worker_id=worker_id,
+                phase="executor-registry-attestation",
+                receipt={
+                    "phase": "executor-registry-attestation",
+                    "requested_executor_id": request.executor_id,
+                    "observed_executor_id": self.executor.executor_id,
+                    "implementation_version": self.executor.implementation_version,
+                    "implementation_digest": self.executor.implementation_digest,
+                    "sandbox_profile": sandbox_profile,
+                    "requires_network": requires_network,
+                    "idempotency_key": request.idempotency_key,
+                    "error_type": type(registry_error).__name__,
+                    "message": str(registry_error)[:4096],
+                },
+                error=registry_error,
+                rollback_uncertain_effect=True,
                 now=now,
             )
         request = self.service.append_transition(
