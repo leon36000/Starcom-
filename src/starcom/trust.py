@@ -542,6 +542,16 @@ class TrustPlane:
         else:
             if str(ledger_row["record_hash"]) != str(decision_row["ledger_hash"]):
                 defects.append("DECISION_LEDGER_HASH_MISMATCH")
+            if str(ledger_row["kind"]) != "AUTHORIZATION_DECIDED":
+                defects.append("DECISION_LEDGER_KIND_MISMATCH")
+            if request_payload is not None:
+                expected_stream_id = f"trust:decisions:{request_payload['subject']}"
+                if str(ledger_row["stream_id"]) != expected_stream_id:
+                    defects.append("DECISION_LEDGER_STREAM_MISMATCH")
+            if str(ledger_row["actor"]) != "trust-plane":
+                defects.append("DECISION_LEDGER_ACTOR_MISMATCH")
+            if str(ledger_row["occurred_at"]) != str(decision_row["decided_at"]):
+                defects.append("DECISION_LEDGER_TIMESTAMP_MISMATCH")
             try:
                 payload = json.loads(str(ledger_row["payload_json"]))
                 if not isinstance(payload, dict):
