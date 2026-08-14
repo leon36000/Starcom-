@@ -278,6 +278,8 @@ class ContinuityCliContractTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 2)
         error = self.error_payload(missing)
         self.assertEqual(error["error"], "VALIDATION_ERROR")
+        self.assertEqual(error["message"], "public_key_file could not be read")
+        self.assertEqual(error["details"]["path"], str(self.root / "missing.pem"))  # type: ignore[index]
         self.assertNotIn("Traceback", missing.stderr)
 
 
