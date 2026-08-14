@@ -35,14 +35,14 @@ jobs:
           cp .control/c2-recollection-cli/apply_patch.py /tmp/starcom-c2-cli/
           sha256sum /tmp/starcom-c2-cli/apply_patch.py
 
-      - name: Establish exact RED baseline
+      - name: Establish exact corrected RED baseline
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'STARCOM Verification Bot'
           git config user.email 'starcom-verification-bot@users.noreply.github.com'
-          git switch -C fix/c2-recollection-cli c8f0723d9f8e52e7272ebc7fcf370d8d36cc2bd6
-          test "$(git rev-parse HEAD)" = "c8f0723d9f8e52e7272ebc7fcf370d8d36cc2bd6"
+          git switch -C fix/c2-recollection-cli 86d58dca08cababac367208b334d9988a7dc5f48
+          test "$(git rev-parse HEAD)" = "86d58dca08cababac367208b334d9988a7dc5f48"
 
       - name: Re-prove C2 CLI contract RED
         shell: bash
