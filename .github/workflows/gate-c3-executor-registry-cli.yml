@@ -1,0 +1,93 @@
+name: Gate STARCOM C3 executor registry CLI work
+
+on:
+  push:
+    branches:
+      - control/c3-executor-registry-cli-next-gate-20260814
+    paths:
+      - '.github/workflows/gate-c3-executor-registry-cli.yml'
+      - '.control/c3-executor-registry-cli-next-gate/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-next-work-gate
+  cancel-in-progress: false
+
+jobs:
+  verify-main-and-create-cli-branch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout gate branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-executor-registry-cli-next-gate-20260814
+          fetch-depth: 0
+
+      - name: Freeze and checkout current main
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          main="$(git rev-parse origin/main)"
+          echo "main=$main" >> "$GITHUB_OUTPUT"
+          git switch -C gate/c3-executor-registry-cli "$main"
+          test -f src/starcom/executor_registry.py
+          test -f tests/test_executor_registry_hardening.py
+          test -f tests/test_executor_worker_attestation.py
+          grep -Fq 'executor-registry-attestation' src/starcom/adoption_execution.py
+
+      - name: Verify attested worker main evidence
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'registry': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_executor_registry.py'
+              ).countTestCases(),
+              'registry_hardening': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_executor_registry_hardening.py'
+              ).countTestCases(),
+              'worker_attestation': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_executor_worker_attestation.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          print(counts)
+          expected = {
+              'registry': 9,
+              'registry_hardening': 7,
+              'worker_attestation': 10,
+              'total': 260,
+          }
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+          python3 -m unittest discover -s tests -p 'test_executor_registry*.py' -v
+          python3 -m unittest discover -s tests -p 'test_executor_worker_attestation.py' -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+
+      - name: Recheck main and create registry CLI branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.main }}'
+          if git ls-remote --exit-code --heads origin agent/c3-executor-registry-cli >/dev/null 2>&1; then
+            remote="$(git ls-remote --heads origin agent/c3-executor-registry-cli | awk '{print $1}')"
+            test "$remote" = '${{ steps.refs.outputs.main }}'
+          else
+            git push origin 'HEAD:refs/heads/agent/c3-executor-registry-cli'
+          fi
+          echo "verified_main=${{ steps.refs.outputs.main }}"
