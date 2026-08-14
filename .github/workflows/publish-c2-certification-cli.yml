@@ -1,0 +1,120 @@
+name: Publish verified STARCOM C2 certification CLI
+
+on:
+  push:
+    branches:
+      - control/certification-cli-final-20260814
+    paths:
+      - '.control/certification-cli-final/**'
+      - '.github/workflows/publish-c2-certification-cli.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c2-certification-cli-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/certification-cli-final-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-certification-cli
+          cp .control/certification-cli-final/apply_patch.py \
+            /tmp/starcom-certification-cli/
+          sha256sum /tmp/starcom-certification-cli/apply_patch.py
+
+      - name: Establish exact causal RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c2-certification-cli \
+            21ebe20937294357c202516b6771e4a64061ae9f
+          test "$(git rev-parse HEAD)" = \
+            "21ebe20937294357c202516b6771e4a64061ae9f"
+
+      - name: Re-prove Certification CLI contract RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -m unittest discover -s tests -p 'test_certification_cli.py' -v \
+            > /tmp/starcom-certification-cli/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-certification-cli/red.log
+          test "$red_status" -ne 0
+          for test_name in \
+            test_snapshot_admit_get_and_verify_preserve_exact_bytes \
+            test_verify_returns_exit_three_after_membership_tampering \
+            test_missing_files_are_structured_and_create_no_upstream_evidence; do
+            grep -Fq "$test_name" /tmp/starcom-certification-cli/red.log
+          done
+          failures="$(grep -c '^FAIL:' /tmp/starcom-certification-cli/red.log || true)"
+          errors="$(grep -c '^ERROR:' /tmp/starcom-certification-cli/red.log || true)"
+          test "$failures" -eq 3
+          test "$errors" -eq 0
+          grep -Fq "invalid choice: 'certification'" \
+            /tmp/starcom-certification-cli/red.log
+
+      - name: Apply exact-byte CLI and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-certification-cli/apply_patch.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_certification_cli.py' -v
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_certification_cli.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 3:
+              raise SystemExit(f'expected 3 certification CLI tests, found {focused}')
+          if total != 154:
+              raise SystemExit(f'expected 154 tests, found {total}')
+          PY
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'feat: expose exact-byte C2 certification CLI'
+          git push origin 'HEAD:refs/heads/fix/c2-certification-cli'
+          git rev-parse HEAD
