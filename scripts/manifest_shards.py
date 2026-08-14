@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from collections.abc import Iterable, Sequence
+from urllib.parse import unquote
 
 from scripts.build_manifest import ManifestVerification, build_manifest
 
@@ -30,6 +31,20 @@ def _parse_segmented_digest(rendered: str, line_number: int) -> str:
     return digest
 
 
+def _parse_relative_path(rendered: str, item: Path, line_number: int) -> str:
+    decoded = unquote(rendered)
+    candidate = PurePosixPath(decoded)
+    if (
+        not decoded
+        or decoded.startswith("/")
+        or "\\" in decoded
+        or "\x00" in decoded
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+    ):
+        raise ValueError(f"invalid manifest line {item}:{line_number}")
+    return candidate.as_posix()
+
+
 def load_manifest_shards(paths: Iterable[str | Path]) -> dict[str, str]:
     entries: dict[str, str] = {}
     seen_any = False
@@ -40,10 +55,9 @@ def load_manifest_shards(paths: Iterable[str | Path]) -> dict[str, str]:
                 continue
             if "  " not in raw:
                 raise ValueError(f"invalid manifest line {item}:{line_number}")
-            rendered_digest, relative = raw.split("  ", 1)
+            rendered_digest, rendered_path = raw.split("  ", 1)
             digest = _parse_segmented_digest(rendered_digest, line_number)
-            if not relative or relative.startswith("/"):
-                raise ValueError(f"invalid manifest line {item}:{line_number}")
+            relative = _parse_relative_path(rendered_path, item, line_number)
             if relative in entries:
                 raise ValueError(f"duplicate manifest path {relative}")
             entries[relative] = digest
