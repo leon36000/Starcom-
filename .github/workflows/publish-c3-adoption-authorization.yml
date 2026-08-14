@@ -34,9 +34,10 @@ jobs:
           mkdir -p /tmp/starcom-c3-adoption
           cp .control/c3-adoption-authorization/adoption.py /tmp/starcom-c3-adoption/
           cp .control/c3-adoption-authorization/patch_test_fixture.py /tmp/starcom-c3-adoption/
+          cp .control/c3-adoption-authorization/normalize_design_doc.py /tmp/starcom-c3-adoption/
           sha256sum /tmp/starcom-c3-adoption/*
 
-      - name: Establish exact RED baseline and correct tamper fixture
+      - name: Establish exact RED baseline and repair bounded fixtures
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +47,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "20b09cf0ec78297ca6b54da5017278804f56f1a3"
           grep -Fq 'RED seam for explicit C3 adoption authorization without execution' src/starcom/adoption.py
           python3 /tmp/starcom-c3-adoption/patch_test_fixture.py
+          python3 /tmp/starcom-c3-adoption/normalize_design_doc.py
 
       - name: Re-prove focused C3 adoption RED
         shell: bash
