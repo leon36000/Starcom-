@@ -1,0 +1,133 @@
+name: Publish verified STARCOM C3 adoption execution authority
+
+on:
+  push:
+    branches:
+      - control/c3-adoption-execution-20260814
+    paths:
+      - '.control/c3-adoption-execution/**'
+      - '.github/workflows/publish-c3-adoption-execution.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-adoption-execution-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-adoption-execution-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded implementation outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-execution
+          cp .control/c3-adoption-execution/patch_durable.py /tmp/starcom-c3-execution/
+          cp .control/c3-adoption-execution/adoption_execution.py /tmp/starcom-c3-execution/
+          sha256sum /tmp/starcom-c3-execution/*
+
+      - name: Establish immutable agent RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin agent/c3-adoption-execution
+          git switch -C fix/c3-adoption-execution origin/agent/c3-adoption-execution
+          git rev-parse HEAD
+          test "$(grep -c 'C3 adoption execution is not implemented' src/starcom/adoption_execution.py)" -eq 2
+          test -f tests/test_durable_transaction.py
+          test -f tests/test_adoption_execution.py
+
+      - name: Re-prove focused causal RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          durable = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_durable_transaction.py'
+          ).countTestCases()
+          execution = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_adoption_execution.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'durable_transaction_count={durable}')
+          print(f'adoption_execution_count={execution}')
+          print(f'test_count={total}')
+          if durable != 2:
+              raise SystemExit(f'expected 2 durable transaction tests, found {durable}')
+          if execution != 10:
+              raise SystemExit(f'expected 10 execution tests, found {execution}')
+          if total != 224:
+              raise SystemExit(f'expected 224 tests, found {total}')
+          PY
+          set +e
+          python3 -m unittest discover -s tests -p 'test_durable_transaction.py' -v > /tmp/starcom-c3-execution/red-durable.log 2>&1
+          durable_status=$?
+          python3 -m unittest discover -s tests -p 'test_adoption_execution.py' -v > /tmp/starcom-c3-execution/red-execution.log 2>&1
+          execution_status=$?
+          set -e
+          cat /tmp/starcom-c3-execution/red-durable.log
+          cat /tmp/starcom-c3-execution/red-execution.log
+          test "$durable_status" -ne 0
+          test "$execution_status" -ne 0
+          grep -Fq 'enqueue_in_transaction' /tmp/starcom-c3-execution/red-durable.log
+          grep -Fq 'C3 adoption execution is not implemented' /tmp/starcom-c3-execution/red-execution.log
+          grep -Fq 'Ran 2 tests' /tmp/starcom-c3-execution/red-durable.log
+          grep -Fq 'Ran 10 tests' /tmp/starcom-c3-execution/red-execution.log
+
+      - name: Apply bounded outbox seam and execution authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c3-execution/patch_durable.py
+          cp /tmp/starcom-c3-execution/adoption_execution.py src/starcom/adoption_execution.py
+          test "$(grep -c '^    def enqueue_in_transaction(' src/starcom/durable.py)" -eq 1
+          test "$(grep -c '^class C3AdoptionExecutionService:' src/starcom/adoption_execution.py)" -eq 1
+          test "$(grep -c '^class C3AdoptionExecutionWorker:' src/starcom/adoption_execution.py)" -eq 1
+          test "$(grep -c '^class DisabledC3AdoptionExecutor:' src/starcom/adoption_execution.py)" -eq 1
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_durable_transaction.py' -v
+          python3 -m unittest discover -s tests -p 'test_adoption_execution.py' -v
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 224:
+              raise SystemExit(f'expected 224 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_adoption_execution.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'feat: add durable separately authorized C3 adoption execution'
+          git push origin 'HEAD:refs/heads/fix/c3-adoption-execution'
+          git rev-parse HEAD
