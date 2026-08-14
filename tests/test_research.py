@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -209,6 +210,62 @@ class ResearchCampaignTests(unittest.TestCase):
         )
         verification = self.research.verify("campaign-1")
         self.assertTrue(verification.ok, verification.defects)
+
+    def test_verifier_rejects_observation_on_non_success_attempt(self) -> None:
+        attempt = self.begin()
+        self.research.record_receipt(
+            attempt.attempt_id,
+            receipt_id="policy-block-forged-observation",
+            outcome=ReceiptOutcome.POLICY_BLOCK,
+            status_code=403,
+            snapshot_digest=None,
+            metadata={"policy": "robots"},
+            actor="agent:researcher",
+            occurred_at=T2,
+        )
+        observation_id = "observation-forged-after-policy-block"
+        data = {"items": ["must-not-count"]}
+        payload = {
+            "observation_id": observation_id,
+            "attempt_id": attempt.attempt_id,
+            "snapshot_digest": SNAPSHOT_A,
+            "content_digest": CONTENT,
+            "data": data,
+        }
+        event = self.ledger.append(
+            "research:campaign:campaign-1",
+            "RESEARCH_OBSERVATION_RECORDED",
+            payload,
+            actor="fixture-forger",
+            occurred_at=T3,
+        )
+        with self.db.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO research_observations (
+                    observation_id, attempt_id, snapshot_digest, content_digest,
+                    data_json, observed_at, ledger_event_id, ledger_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_id,
+                    attempt.attempt_id,
+                    SNAPSHOT_A,
+                    CONTENT,
+                    json.dumps(data, sort_keys=True, separators=(",", ":")),
+                    T3,
+                    event.event_id,
+                    event.record_hash,
+                ),
+            )
+
+        verification = self.research.verify("campaign-1")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            f"NON_SUCCESS_OBSERVATION_PRESENT:{observation_id}",
+            verification.defects,
+        )
 
     def test_verifier_reports_malformed_attempt_request_json(self) -> None:
         attempt = self.begin()
