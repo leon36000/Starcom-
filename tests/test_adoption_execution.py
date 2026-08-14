@@ -34,6 +34,12 @@ POST_STATE = "2" * 64
 RESTORED_STATE = "3" * 64
 
 
+def copy_database(source: Path, destination: Path) -> None:
+    with sqlite3.connect(source) as source_connection:
+        with sqlite3.connect(destination) as destination_connection:
+            source_connection.backup(destination_connection)
+
+
 class DeterministicExecutor:
     executor_id = "deterministic-test-executor"
 
@@ -127,7 +133,7 @@ class C3AdoptionExecutionTests(unittest.TestCase):
         cls.repo_root = fixture.repo_root
         cls.fixture_root = tempfile.TemporaryDirectory()
         cls.execution_base_db = Path(cls.fixture_root.name) / "execution-base.sqlite3"
-        shutil.copy2(fixture.base_db_path, cls.execution_base_db)
+        copy_database(fixture.base_db_path, cls.execution_base_db)
 
         helper = adoption_cli_fixture.C3AdoptionCliTests(
             methodName=(
@@ -157,7 +163,7 @@ class C3AdoptionExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tempdir.name) / "starcom.sqlite3"
-        shutil.copy2(self.execution_base_db, self.db_path)
+        copy_database(self.execution_base_db, self.db_path)
         self.runtime = Runtime.open(self.db_path)
         self.outbox = DurableOutbox(self.runtime.database, self.runtime.ledger)
         self.service = C3AdoptionExecutionService(
@@ -317,14 +323,16 @@ class C3AdoptionExecutionTests(unittest.TestCase):
         first = self.request(preparation, decision.decision_id)
         replay = self.request(preparation, decision.decision_id)
         self.assertEqual(first, replay)
-        self.assertEqual(
-            len(
-                self.runtime.ledger.read(
-                    "continuity:c3:c3-decision-run:adoption:adoption-cli:execution:execution-1"
-                )
-            ),
-            1,
+        ledger_count = int(
+            self.runtime.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events WHERE stream_id = ?",
+                (
+                    "continuity:c3:c3-decision-run:adoption:adoption-cli:"
+                    "execution:execution-1",
+                ),
+            ).fetchone()[0]
         )
+        self.assertEqual(ledger_count, 1)
         changed_plan = dict(self.execution_plan())
         changed_plan["target_environment"] = "different-sandbox"
         with self.assertRaises(ConflictError):
@@ -414,11 +422,11 @@ class C3AdoptionExecutionTests(unittest.TestCase):
         self.assertEqual(executor.actual_effect_count, 1)
         self.assertEqual(
             self.outbox.get(requested.outbox_effect_id).status,
-            EffectStatus.IN_PROGRESS,
+            EffectStatus.LEASED,
         )
 
-        recovered = self.outbox.recover_expired(now=E4, actor="lease-reaper")
-        self.assertEqual([item.effect_id for item in recovered], [requested.outbox_effect_id])
+        recovered = self.outbox.recover_expired(now=E4)
+        self.assertEqual(recovered, 1)
         completed = worker.process_next(worker_id="worker-retry", now=E4, lease_seconds=30)
 
         assert completed is not None

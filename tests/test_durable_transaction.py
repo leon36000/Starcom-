@@ -41,10 +41,13 @@ class DurableOutboxTransactionTests(unittest.TestCase):
 
         with self.assertRaises(NotFoundError):
             self.outbox.get("effect-transaction-rollback")
-        self.assertEqual(
-            self.ledger.read("durable:effect:effect-transaction-rollback"),
-            (),
+        ledger_count = int(
+            self.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events WHERE stream_id = ?",
+                ("durable:effect:effect-transaction-rollback",),
+            ).fetchone()[0]
         )
+        self.assertEqual(ledger_count, 0)
 
     def test_wrapper_and_transactional_enqueue_share_idempotency_and_conflicts(self) -> None:
         arguments = {
@@ -63,10 +66,13 @@ class DurableOutboxTransactionTests(unittest.TestCase):
 
         self.assertEqual(first, replay)
         self.assertEqual(first, wrapper_replay)
-        self.assertEqual(
-            len(self.ledger.read("durable:effect:effect-transaction-idempotent")),
-            1,
+        ledger_count = int(
+            self.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events WHERE stream_id = ?",
+                ("durable:effect:effect-transaction-idempotent",),
+            ).fetchone()[0]
         )
+        self.assertEqual(ledger_count, 1)
         with self.database.transaction() as connection:
             with self.assertRaises(ConflictError):
                 self.outbox.enqueue_in_transaction(

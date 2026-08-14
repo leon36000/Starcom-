@@ -40,7 +40,10 @@ class C3AdoptionExecutionHardeningTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tempdir.name) / "starcom.sqlite3"
-        shutil.copy2(self.execution_base_db, self.db_path)
+        execution_fixture.copy_database(
+            self.execution_base_db,
+            self.db_path,
+        )
         self.runtime = Runtime.open(self.db_path)
         self.outbox = DurableOutbox(self.runtime.database, self.runtime.ledger)
         self.service = C3AdoptionExecutionService(
