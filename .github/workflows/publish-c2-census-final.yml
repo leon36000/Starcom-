@@ -1,0 +1,115 @@
+name: Publish verified STARCOM C2 census identity registry
+
+on:
+  push:
+    branches:
+      - control/c2-census-final-20260814
+    paths:
+      - '.control/c2-census-final/**'
+      - '.github/workflows/publish-c2-census-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c2-census-final-publication
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c2-census-final-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded falsification patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c2-census
+          cp .control/c2-census-final/apply_falsification_patch.py /tmp/starcom-c2-census/
+          sha256sum /tmp/starcom-c2-census/apply_falsification_patch.py
+
+      - name: Establish exact product baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c2-census-identity-registry 69821b9cd66d9506a6c3679a94ca6c0cc1da6362
+          test "$(git rev-parse HEAD)" = "69821b9cd66d9506a6c3679a94ca6c0cc1da6362"
+
+      - name: Re-prove real C1-to-C2 census baseline GREEN
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_census.py' -v
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover('tests', pattern='test_census.py').countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 5:
+              raise SystemExit(f'expected 5 baseline census tests, found {focused}')
+          if total != 123:
+              raise SystemExit(f'expected 123 baseline tests, found {total}')
+          PY
+
+      - name: Apply final census falsification coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c2-census/apply_falsification_patch.py
+
+      - name: Verify expanded census contract and refresh manifest
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_census.py' -v
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover('tests', pattern='test_census.py').countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 7:
+              raise SystemExit(f'expected 7 census tests, found {focused}')
+          if total != 125:
+              raise SystemExit(f'expected 125 tests, found {total}')
+          PY
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify complete repository and deterministic stress
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'feat: add evidence-bound C2 census identity registry'
+          git push origin 'HEAD:refs/heads/fix/c2-census-identity-registry'
+          git rev-parse HEAD
