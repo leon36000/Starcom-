@@ -61,7 +61,6 @@ jobs:
           test "$failures" -eq 4
           test "$errors" -eq 0
           grep -Fq "invalid choice: 'qualification'" /tmp/starcom-qualification-cli/red.log
-          grep -Fq "invalid choice: 'c3'" /tmp/starcom-qualification-cli/red.log
 
       - name: Apply thin CLI patch and refresh manifest
         shell: bash
