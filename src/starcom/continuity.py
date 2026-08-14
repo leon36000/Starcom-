@@ -1040,6 +1040,17 @@ class ContinuityService:
                         label=f"TRUST_ROOT:{key_id}",
                     )
                 )
+                trust_root_event = self.database.connection.execute(
+                    "SELECT stream_id, actor, occurred_at FROM ledger_events WHERE event_id = ?",
+                    (str(root["ledger_event_id"]),),
+                ).fetchone()
+                if trust_root_event is not None:
+                    if str(trust_root_event["stream_id"]) != f"continuity:trust-root:{key_id}":
+                        defects.append(f"TRUST_ROOT:{key_id}_LEDGER_STREAM_MISMATCH")
+                    if str(trust_root_event["actor"]) != str(root["accepted_by"]):
+                        defects.append(f"TRUST_ROOT:{key_id}_LEDGER_ACTOR_MISMATCH")
+                    if str(trust_root_event["occurred_at"]) != str(root["accepted_at"]):
+                        defects.append(f"TRUST_ROOT:{key_id}_LEDGER_TIMESTAMP_MISMATCH")
 
                 if not self.signature_verifier.verify(public_key, payload, signature):
                     defects.append(f"REVIEW_SIGNATURE_INVALID:{review_id}")
