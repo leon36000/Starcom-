@@ -1,0 +1,134 @@
+name: Publish verified STARCOM C3 execution admission CLI v2
+
+on:
+  push:
+    branches:
+      - control/c3-adoption-execution-cli-v2-20260814
+    paths:
+      - '.control/c3-adoption-execution-cli-v2/**'
+      - '.github/workflows/publish-c3-adoption-execution-cli-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-adoption-execution-cli-v2-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout isolated control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-adoption-execution-cli-v2-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-execution-cli-v2
+          cp .control/c3-adoption-execution-cli-v2/apply_patch.py \
+            /tmp/starcom-c3-execution-cli-v2/
+          sha256sum /tmp/starcom-c3-execution-cli-v2/apply_patch.py
+
+      - name: Establish exact RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c3-adoption-execution-cli-v2 \
+            27ddf43702fbf1e3695516bf689619850ee3307a
+          test "$(git rev-parse HEAD)" = \
+            "27ddf43702fbf1e3695516bf689619850ee3307a"
+          test "$(git rev-parse HEAD^)" = \
+            "5a9a6ab11c8d94b8c29809764508d8628dee5ed9"
+          test -f src/starcom/adoption_execution.py
+          test -f tests/test_adoption_execution_cli.py
+          ! grep -Fq '"adoption-execution"' src/starcom/cli.py
+
+      - name: Re-prove exact CLI RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_adoption_execution_cli.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 4:
+              raise SystemExit(f'expected 4 execution CLI tests, found {focused}')
+          if total != 234:
+              raise SystemExit(f'expected 234 tests, found {total}')
+          PY
+          set +e
+          python3 -m unittest discover -s tests \
+            -p 'test_adoption_execution_cli.py' -v \
+            > /tmp/starcom-c3-execution-cli-v2/red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/starcom-c3-execution-cli-v2/red.log
+          test "$status" -ne 0
+          grep -Fq 'Ran 4 tests' /tmp/starcom-c3-execution-cli-v2/red.log
+          grep -Fq 'FAILED (failures=3)' /tmp/starcom-c3-execution-cli-v2/red.log
+          test "$(grep -c '^FAIL:' /tmp/starcom-c3-execution-cli-v2/red.log || true)" -eq 3
+          test "$(grep -c '^ERROR:' /tmp/starcom-c3-execution-cli-v2/red.log || true)" -eq 0
+          grep -Fq "invalid choice: 'adoption-execution'" \
+            /tmp/starcom-c3-execution-cli-v2/red.log
+          grep -Fq \
+            'test_no_worker_or_execution_subcommand_is_exposed (test_adoption_execution_cli.C3AdoptionExecutionCliTests.test_no_worker_or_execution_subcommand_is_exposed) ... ok' \
+            /tmp/starcom-c3-execution-cli-v2/red.log
+
+      - name: Apply thin CLI patch and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c3-execution-cli-v2/apply_patch.py
+          test "$(grep -c '^def _adoption_execution_' src/starcom/cli.py)" -eq 4
+          grep -Fq 'adoption_execution: C3AdoptionExecutionService' \
+            src/starcom/cli.py
+          ! grep -Fq 'C3AdoptionExecutionWorker' src/starcom/cli.py
+          python3 scripts/build_manifest.py --root . \
+            --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests \
+            -p 'test_adoption_execution_cli.py' -v
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 234:
+              raise SystemExit(f'expected 234 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover \
+            -s tests -p 'test_adoption_execution_cli.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'feat: expose non-executing durable C3 execution CLI'
+          git push origin 'HEAD:refs/heads/fix/c3-adoption-execution-cli-v2'
+          git rev-parse HEAD
