@@ -583,6 +583,9 @@ class C3AdoptionTests(unittest.TestCase):
         self.assertIn("C3_ADOPTION_ROLLBACK_INVALID", rollback_verification.defects)
 
         self.database.connection.execute(
+            "DROP TRIGGER continuity_authorization_consumptions_no_update"
+        )
+        self.database.connection.execute(
             """
             UPDATE continuity_authorization_consumptions SET operation_id = ?
             WHERE decision_id = ?

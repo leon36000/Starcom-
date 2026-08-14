@@ -1,7 +1,7 @@
 # C3 adoption authorization without execution
 
-**Date:** 2026-08-14  
-**Issue:** #42  
+**Date:** 2026-08-14
+**Issue:** #42
 **Status:** implementation-ready
 
 ## Purpose
