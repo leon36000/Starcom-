@@ -33,9 +33,11 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/starcom-c3-execution-v4
           cp .control/c3-adoption-execution-v4/materialize_adoption_execution.py /tmp/starcom-c3-execution-v4/
+          cp .control/c3-adoption-execution-v4/harden_request_conflict.py /tmp/starcom-c3-execution-v4/
           cp .control/c3-adoption-execution-v4/patch_durable.py /tmp/starcom-c3-execution-v4/
           cp .control/c3-adoption-execution-v4/patch_tests.py /tmp/starcom-c3-execution-v4/
           python3 /tmp/starcom-c3-execution-v4/materialize_adoption_execution.py
+          python3 /tmp/starcom-c3-execution-v4/harden_request_conflict.py
           sha256sum /tmp/starcom-c3-execution-v4/*
 
       - name: Freeze exact main and RED branch
