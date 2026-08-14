@@ -30,6 +30,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
           git switch -C fix/c1-trust-root-event-binding 0b13b92989dfcefc8a0417dbd2a0a13984833641
           test "$(git rev-parse HEAD)" = "0b13b92989dfcefc8a0417dbd2a0a13984833641"
           test "$(git rev-parse origin/main)" = "e0d0b03b9071941181b54da83ad364e602f096bd"
@@ -90,8 +92,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'STARCOM Verification Bot'
-          git config user.email 'starcom-verification-bot@users.noreply.github.com'
           git commit -m 'chore: integrate verified TrustPlane hardening into C1 verifier'
           git push origin 'HEAD:refs/heads/fix/c1-trust-root-event-binding'
           git rev-parse HEAD
