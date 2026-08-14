@@ -126,6 +126,7 @@ A terminal decision requires:
 - a valid signature over the exact payload bytes;
 - payload counts, digests, identifiers, and head hash that exactly match the current snapshot;
 - a decision timestamp not earlier than the latest candidate or evaluation evidence;
+- an admission timestamp not earlier than the signed decision timestamp;
 - an independent decision-maker identity.
 
 The decision-maker may not equal:

@@ -237,7 +237,7 @@ Call `ContinuityService.verify_trust_root(key_id)`, read the exact public key by
 
 - [ ] **Step 3: Implement snapshot agreement, selection, chronology, and independence**
 
-Require at least one candidate and one evaluation. Compare all signed snapshot fields exactly. Require selected membership when applicable. Require `decided_at_utc >= latest_evidence_at`.
+Require at least one candidate and one evaluation. Compare all signed snapshot fields exactly. Require selected membership when applicable. Require `decided_at_utc >= latest_evidence_at` and `admitted_at >= decided_at_utc`.
 
 Disallow a decision-maker matching the C2 certifier, C3 starter, qualification creator, candidate recorder, or evaluation recorder.
 

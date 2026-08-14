@@ -334,10 +334,18 @@ class C3DecisionService:
         evidence = (*candidates, *evaluations)
         latest_evidence_at = None
         if evidence:
-            latest_evidence_at = max(
-                (str(member["recorded_at"]) for member in evidence),
-                key=self._as_datetime,
-            )
+            validated_times: list[str] = []
+            for member in evidence:
+                recorded_at = str(member["recorded_at"])
+                try:
+                    self._timestamp(recorded_at, "recorded_at")
+                except ValidationError as exc:
+                    raise IntegrityError(
+                        "qualification artifact timestamp is invalid",
+                        {"artifact_id": str(member["artifact_id"])},
+                    ) from exc
+                validated_times.append(recorded_at)
+            latest_evidence_at = max(validated_times, key=self._as_datetime)
         return C3DecisionSnapshot(
             c3_run_id=c3_run_id,
             qualification_run_id=qualification_run_id,
@@ -568,9 +576,10 @@ class C3DecisionService:
                 "selected candidate is not present in the C3 decision snapshot",
                 {"selected_candidate_artifact_id": selected},
             )
+        decided_at = self._timestamp(value["decided_at_utc"], "decided_at_utc")
         if (
             snapshot.latest_evidence_at is not None
-            and self._as_datetime(str(value["decided_at_utc"]))
+            and self._as_datetime(decided_at)
             < self._as_datetime(snapshot.latest_evidence_at)
         ):
             raise StateTransitionError(
@@ -601,6 +610,14 @@ class C3DecisionService:
                     "decision_maker_identity": decision_maker_identity,
                     "disallowed_identities": sorted(disallowed),
                 },
+            )
+
+    def _assert_admission_time(self, admitted_at: str, decided_at: str) -> None:
+        admitted = self._timestamp(admitted_at, "admitted_at")
+        decided = self._timestamp(decided_at, "decided_at_utc")
+        if self._as_datetime(admitted) < self._as_datetime(decided):
+            raise StateTransitionError(
+                "admission predates the signed C3 decision"
             )
 
     @staticmethod
@@ -691,6 +708,7 @@ class C3DecisionService:
         self._assert_evidence_selection_and_time(value, snapshot)
         decision_maker_identity = str(value["decision_maker_identity"])
         self._assert_independent(decision_maker_identity, snapshot)
+        self._assert_admission_time(occurred_at, str(value["decided_at_utc"]))
 
         try:
             with self.database.transaction() as connection:
@@ -728,6 +746,10 @@ class C3DecisionService:
                 self._assert_payload_matches_snapshot(value, current_snapshot)
                 self._assert_evidence_selection_and_time(value, current_snapshot)
                 self._assert_independent(decision_maker_identity, current_snapshot)
+                self._assert_admission_time(
+                    occurred_at,
+                    str(value["decided_at_utc"]),
+                )
                 provisional = C3DecisionRecord(
                     decision_id=decision_id,
                     c3_run_id=c3_run_id,
@@ -944,6 +966,7 @@ class C3DecisionService:
         ).fetchall()
         frozen_candidates: list[Mapping[str, Any]] = []
         frozen_evaluations: list[Mapping[str, Any]] = []
+        valid_recorded_times: list[str] = []
         expected_ordinals = {"CANDIDATE": 0, "EVALUATION": 0}
         for frozen in frozen_rows:
             kind = str(frozen["kind"])
@@ -953,6 +976,15 @@ class C3DecisionService:
                 defects.append(f"C3_DECISION_EVIDENCE_ORDINAL_MISMATCH:{label}")
             expected_ordinals[kind] = ordinal + 1
             member = self._member_from_frozen_row(frozen)
+            recorded_at = str(member["recorded_at"])
+            try:
+                self._timestamp(recorded_at, "recorded_at")
+            except ValidationError:
+                defects.append(
+                    f"C3_DECISION_EVIDENCE_RECORDED_AT_INVALID:{label}"
+                )
+            else:
+                valid_recorded_times.append(recorded_at)
             material = member["material"]
             if not isinstance(material, dict):
                 defects.append(f"C3_DECISION_EVIDENCE_MATERIAL_INVALID:{label}")
@@ -995,10 +1027,9 @@ class C3DecisionService:
             defects.append("C3_DECISION_EVALUATION_SET_DIGEST_MISMATCH")
 
         latest_evidence_at = None
-        frozen_all = (*frozen_candidates, *frozen_evaluations)
-        if frozen_all:
+        if valid_recorded_times:
             latest_evidence_at = max(
-                (str(member["recorded_at"]) for member in frozen_all),
+                valid_recorded_times,
                 key=self._as_datetime,
             )
         frozen_snapshot = C3DecisionSnapshot(
@@ -1021,12 +1052,16 @@ class C3DecisionService:
         }
         try:
             self._assert_evidence_selection_and_time(semantic_value, frozen_snapshot)
-        except StateTransitionError:
+        except (StateTransitionError, ValidationError, ValueError):
             defects.append("C3_DECISION_SEMANTICS_OR_CHRONOLOGY_INVALID")
         try:
             self._assert_independent(record.decision_maker_identity, frozen_snapshot)
         except StateTransitionError:
             defects.append("C3_DECISION_INDEPENDENCE_INVALID")
+        try:
+            self._assert_admission_time(record.admitted_at, record.decided_at_utc)
+        except (StateTransitionError, ValidationError, ValueError):
+            defects.append("C3_DECISION_ADMISSION_CHRONOLOGY_INVALID")
 
         if c3_verification.ok:
             try:
