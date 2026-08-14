@@ -53,6 +53,30 @@ class DeterministicExecutor:
     )
     source = replace_once(
         source,
+        '''        self.assertEqual(
+            len(
+                self.runtime.ledger.read(
+                    "continuity:c3:c3-decision-run:adoption:adoption-cli:execution:execution-1"
+                )
+            ),
+            1,
+        )
+''',
+        '''        ledger_count = int(
+            self.runtime.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events WHERE stream_id = ?",
+                (
+                    "continuity:c3:c3-decision-run:adoption:adoption-cli:"
+                    "execution:execution-1",
+                ),
+            ).fetchone()[0]
+        )
+        self.assertEqual(ledger_count, 1)
+''',
+        "idempotent execution stream event count",
+    )
+    source = replace_once(
+        source,
         "EffectStatus.IN_PROGRESS",
         "EffectStatus.LEASED",
         "real durable leased status",
