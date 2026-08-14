@@ -1,0 +1,102 @@
+name: Publish verified STARCOM C1 continuity CLI
+
+on:
+  push:
+    branches:
+      - control/c1-continuity-cli-20260814
+    paths:
+      - '.control/c1-continuity-cli/**'
+      - '.github/workflows/publish-c1-continuity-cli.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c1-continuity-cli-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c1-continuity-cli-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c1-cli
+          cp .control/c1-continuity-cli/apply_patch.py /tmp/starcom-c1-cli/
+          sha256sum /tmp/starcom-c1-cli/apply_patch.py
+
+      - name: Establish exact RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c1-continuity-cli 37e7521b59e055a9237fc81f6b10f16386451303
+          test "$(git rev-parse HEAD)" = "37e7521b59e055a9237fc81f6b10f16386451303"
+
+      - name: Re-prove exact-byte CLI tests RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -m unittest discover -s tests -p 'test_continuity_cli.py' -v > /tmp/starcom-c1-cli/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-c1-cli/red.log
+          test "$red_status" -ne 0
+          grep -Fq 'test_exact_byte_artifacts_drive_explicit_c1_cli_flow' /tmp/starcom-c1-cli/red.log
+          grep -Fq 'test_missing_artifact_file_is_machine_readable_validation_error' /tmp/starcom-c1-cli/red.log
+          failures="$(grep -c '^FAIL:' /tmp/starcom-c1-cli/red.log || true)"
+          test "$failures" -eq 2
+
+      - name: Apply bounded CLI implementation and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c1-cli/apply_patch.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify GREEN and full repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_continuity_cli.py' -v
+          python3 - <<'PY'
+          import unittest
+          count = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={count}')
+          if count != 99:
+              raise SystemExit(f'expected 99 tests, found {count}')
+          PY
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'feat: expose proof-gated C1 continuity CLI'
+          git push origin 'HEAD:refs/heads/fix/c1-continuity-cli'
+          git rev-parse HEAD
