@@ -20,6 +20,8 @@ from .errors import StarcomError, ValidationError
 from .ledger import EventLedger
 from .mission import MissionKernel, MissionState
 from .proof import ProofEngine, VerificationVerdict
+from .qualification import QualificationArtifactKind, QualificationLab
+from .qualification_gate import C3QualificationGate
 from .recollection import C2RecollectionService
 from .research import ReceiptOutcome, ResearchCampaign
 from .trust import (
@@ -52,6 +54,8 @@ class Runtime:
     recollection: C2RecollectionService
     census: C2CensusService
     certification: C2CertificationService
+    qualification: QualificationLab
+    c3: C3QualificationGate
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -73,6 +77,13 @@ class Runtime:
                 recollection,
                 census,
             )
+            qualification = QualificationLab(database, ledger)
+            c3 = C3QualificationGate(
+                database,
+                ledger,
+                certification,
+                qualification,
+            )
             return cls(
                 database,
                 ledger,
@@ -84,6 +95,8 @@ class Runtime:
                 recollection,
                 census,
                 certification,
+                qualification,
+                c3,
             )
         except BaseException:
             database.close()
@@ -398,6 +411,68 @@ def _certification_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any,
 
 def _certification_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
     verification = runtime.certification.verify_certificate(args.certificate_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _qualification_create_run(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.qualification.create_run(
+        args.qualification_run_id,
+        name=args.name,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _qualification_get_run(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.qualification.get_run(args.qualification_run_id), 0
+
+
+def _qualification_record_artifact(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.qualification.record_artifact(
+        args.qualification_run_id,
+        artifact_id=args.artifact_id,
+        kind=QualificationArtifactKind(args.kind),
+        material=_json_object(args.material_json, "material_json"),
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _qualification_get_artifact(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.qualification.get_artifact(args.artifact_id), 0
+
+
+def _qualification_verify(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    verification = runtime.qualification.verify(args.qualification_run_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _c3_start(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.c3.start(
+        args.c3_run_id,
+        qualification_run_id=args.qualification_run_id,
+        certificate_id=args.certificate_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _c3_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.c3.get(args.c3_run_id), 0
+
+
+def _c3_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.c3.verify(args.c3_run_id)
     return _verification_payload(verification), 0 if verification.ok else 3
 
 
@@ -751,6 +826,72 @@ def build_parser() -> argparse.ArgumentParser:
     certification_verify = certification_commands.add_parser("verify")
     certification_verify.add_argument("--certificate-id", required=True)
     _set_handler(certification_verify, _certification_verify)
+
+    qualification = top.add_parser(
+        "qualification",
+        help="manage generic append-only component qualification evidence",
+    )
+    qualification_commands = qualification.add_subparsers(
+        dest="qualification_command", required=True
+    )
+
+    qualification_create_run = qualification_commands.add_parser("create-run")
+    qualification_create_run.add_argument("--qualification-run-id", required=True)
+    qualification_create_run.add_argument("--name", required=True)
+    qualification_create_run.add_argument("--actor", required=True)
+    _add_occurred_at(qualification_create_run)
+    _set_handler(qualification_create_run, _qualification_create_run)
+
+    qualification_get_run = qualification_commands.add_parser("get-run")
+    qualification_get_run.add_argument("--qualification-run-id", required=True)
+    _set_handler(qualification_get_run, _qualification_get_run)
+
+    qualification_record_artifact = qualification_commands.add_parser(
+        "record-artifact"
+    )
+    qualification_record_artifact.add_argument(
+        "--qualification-run-id", required=True
+    )
+    qualification_record_artifact.add_argument("--artifact-id", required=True)
+    qualification_record_artifact.add_argument(
+        "--kind",
+        required=True,
+        choices=[item.value for item in QualificationArtifactKind],
+    )
+    qualification_record_artifact.add_argument("--material-json", required=True)
+    qualification_record_artifact.add_argument("--actor", required=True)
+    _add_occurred_at(qualification_record_artifact)
+    _set_handler(qualification_record_artifact, _qualification_record_artifact)
+
+    qualification_get_artifact = qualification_commands.add_parser("get-artifact")
+    qualification_get_artifact.add_argument("--artifact-id", required=True)
+    _set_handler(qualification_get_artifact, _qualification_get_artifact)
+
+    qualification_verify = qualification_commands.add_parser("verify")
+    qualification_verify.add_argument("--qualification-run-id", required=True)
+    _set_handler(qualification_verify, _qualification_verify)
+
+    c3 = top.add_parser(
+        "c3",
+        help="manage the exact-C2-certificate-gated C3 qualification binding",
+    )
+    c3_commands = c3.add_subparsers(dest="c3_command", required=True)
+
+    c3_start = c3_commands.add_parser("start")
+    c3_start.add_argument("--c3-run-id", required=True)
+    c3_start.add_argument("--qualification-run-id", required=True)
+    c3_start.add_argument("--certificate-id", required=True)
+    c3_start.add_argument("--actor", required=True)
+    _add_occurred_at(c3_start)
+    _set_handler(c3_start, _c3_start)
+
+    c3_get = c3_commands.add_parser("get")
+    c3_get.add_argument("--c3-run-id", required=True)
+    _set_handler(c3_get, _c3_get)
+
+    c3_verify = c3_commands.add_parser("verify")
+    c3_verify.add_argument("--c3-run-id", required=True)
+    _set_handler(c3_verify, _c3_verify)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
