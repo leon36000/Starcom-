@@ -1,0 +1,86 @@
+name: Publish final verified STARCOM C2 recollection gate
+
+on:
+  push:
+    branches:
+      - control/c2-recollection-finalize-20260814
+    paths:
+      - '.github/workflows/publish-c2-recollection-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c2-recollection-final-publication
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c2-recollection-finalize-20260814
+          fetch-depth: 0
+
+      - name: Establish exact falsification-verified baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c2-recollection-gate-final f59bfd1fe56393ae4d1f8cb498a9a81f2ff2b8e3
+          test "$(git rev-parse HEAD)" = "f59bfd1fe56393ae4d1f8cb498a9a81f2ff2b8e3"
+
+      - name: Re-prove expanded C2 falsification suite before manifest refresh
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_recollection.py' -v
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover('tests', pattern='test_recollection.py').countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 13:
+              raise SystemExit(f'expected 13 C2 tests, found {focused}')
+          if total != 112:
+              raise SystemExit(f'expected 112 tests, found {total}')
+          PY
+
+      - name: Refresh deterministic manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify final repository and deterministic stress
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish final verified branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'test: harden C2 recollection verifier falsification coverage'
+          git push origin 'HEAD:refs/heads/fix/c2-recollection-gate-final'
+          git rev-parse HEAD
