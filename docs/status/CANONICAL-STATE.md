@@ -1,6 +1,6 @@
 # STARCOM canonical repository state
 
-**Repository:** `leon36000/Starcom-`  
+**Repository:** `leon36000/Starcom-`
 **Bootstrap date:** 2026-08-13
 
 ## Recovered continuity facts
