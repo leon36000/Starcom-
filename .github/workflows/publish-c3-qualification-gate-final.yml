@@ -1,6 +1,11 @@
 name: Publish verified STARCOM C3 qualification gate
 
 on:
+  push:
+    branches:
+      - control/c3-qualification-gate-final-20260814
+    paths:
+      - '.github/workflows/publish-c3-qualification-gate-final.yml'
   workflow_dispatch:
 
 permissions:
@@ -15,20 +20,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - name: Checkout exact product branch
+      - name: Checkout control branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: agent/c3-qualification-gate
+          ref: control/c3-qualification-gate-final-20260814
           fetch-depth: 0
 
-      - name: Establish exact product baseline
+      - name: Establish exact GREEN product baseline
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'STARCOM Verification Bot'
           git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/c3-qualification-gate 98367fd2ae7f5a960cc6a1ef9c7597f965a67070
           test "$(git rev-parse HEAD)" = "98367fd2ae7f5a960cc6a1ef9c7597f965a67070"
-          git switch -C fix/c3-qualification-gate
 
       - name: Re-prove focused C3 GREEN and refresh manifest
         shell: bash
