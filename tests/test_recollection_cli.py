@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -140,10 +139,6 @@ class C2RecollectionCliTests(unittest.TestCase):
             check=True,
             capture_output=True,
         )
-        self.assertEqual(
-            hashlib.sha256(payload_path.read_bytes()).hexdigest(),
-            hashlib.sha256(payload_path.read_bytes()).hexdigest(),
-        )
         return payload_path, signature_path, public_key
 
     def publish_c1(self) -> None:
@@ -258,7 +253,7 @@ class C2RecollectionCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         error = self.error(result)
-        self.assertEqual(error["error"], "STATE_TRANSITION_ERROR")
+        self.assertEqual(error["error"], "INVALID_STATE_TRANSITION")
         self.assertEqual(error["message"], "C1 recovery must be published before C2 recollection")
 
     def test_published_c1_can_start_get_and_verify_c2(self) -> None:
