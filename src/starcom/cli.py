@@ -12,6 +12,7 @@ from typing import Any
 
 from . import __version__
 from .canonical import canonical_json
+from .continuity import ContinuityService
 from .db import Database
 from .errors import StarcomError, ValidationError
 from .ledger import EventLedger
@@ -44,6 +45,7 @@ class Runtime:
     proof: ProofEngine
     missions: MissionKernel
     research: ResearchCampaign
+    continuity: ContinuityService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -55,7 +57,8 @@ class Runtime:
             proof = ProofEngine(database, ledger)
             missions = MissionKernel(database, ledger, trust, proof)
             research = ResearchCampaign(database, ledger)
-            return cls(database, ledger, trust, proof, missions, research)
+            continuity = ContinuityService(database, ledger, trust)
+            return cls(database, ledger, trust, proof, missions, research, continuity)
         except BaseException:
             database.close()
             raise
@@ -85,6 +88,17 @@ def _json_object(raw: str, field_name: str) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise ValidationError(f"{field_name} must contain a JSON object")
     return value
+
+
+def _read_file_bytes(raw: str, field_name: str) -> bytes:
+    path = Path(raw).expanduser()
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise ValidationError(
+            f"{field_name} could not be read",
+            {"path": str(path), "type": type(exc).__name__},
+        ) from exc
 
 
 def _verification_payload(value: Any) -> dict[str, Any]:
@@ -221,6 +235,60 @@ def _research_cursor(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, i
 def _research_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
     verification = runtime.research.verify(args.campaign_id)
     return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _continuity_create_incident(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.continuity.create_incident(
+        args.incident_id,
+        reviewed_archive_sha256=args.reviewed_archive_sha256,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _continuity_get_incident(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.continuity.get_incident(args.incident_id), 0
+
+
+def _continuity_accept_trust_root(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    public_key = _read_file_bytes(args.public_key_file, "public_key_file")
+    return runtime.continuity.accept_trust_root(
+        args.key_id,
+        public_key,
+        decision_id=args.decision_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _continuity_admit_review(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    payload = _read_file_bytes(args.payload_file, "payload_file")
+    signature = _read_file_bytes(args.signature_file, "signature_file")
+    return runtime.continuity.admit_review(
+        args.incident_id,
+        args.key_id,
+        payload,
+        signature,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _continuity_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.continuity.verify_incident(args.incident_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _continuity_publish_recovery(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.continuity.publish_recovery(
+        args.incident_id,
+        args.review_id,
+        publication_id=args.publication_id,
+        idempotency_key=args.idempotency_key,
+        decision_id=args.decision_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
 
 
 def _trust_add_rule(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
@@ -442,6 +510,54 @@ def build_parser() -> argparse.ArgumentParser:
     research_verify = research_commands.add_parser("verify")
     research_verify.add_argument("--campaign-id", required=True)
     _set_handler(research_verify, _research_verify)
+
+    continuity = top.add_parser(
+        "continuity",
+        help="manage proof-gated C1 review admission and recovery publication",
+    )
+    continuity_commands = continuity.add_subparsers(dest="continuity_command", required=True)
+
+    create_incident = continuity_commands.add_parser("create-incident")
+    create_incident.add_argument("--incident-id", required=True)
+    create_incident.add_argument("--reviewed-archive-sha256", required=True)
+    create_incident.add_argument("--actor", required=True)
+    _add_occurred_at(create_incident)
+    _set_handler(create_incident, _continuity_create_incident)
+
+    get_incident = continuity_commands.add_parser("get-incident")
+    get_incident.add_argument("--incident-id", required=True)
+    _set_handler(get_incident, _continuity_get_incident)
+
+    accept_trust_root = continuity_commands.add_parser("accept-trust-root")
+    accept_trust_root.add_argument("--key-id", required=True)
+    accept_trust_root.add_argument("--public-key-file", required=True)
+    accept_trust_root.add_argument("--decision-id", required=True)
+    accept_trust_root.add_argument("--actor", required=True)
+    _add_occurred_at(accept_trust_root)
+    _set_handler(accept_trust_root, _continuity_accept_trust_root)
+
+    admit_review = continuity_commands.add_parser("admit-review")
+    admit_review.add_argument("--incident-id", required=True)
+    admit_review.add_argument("--key-id", required=True)
+    admit_review.add_argument("--payload-file", required=True)
+    admit_review.add_argument("--signature-file", required=True)
+    admit_review.add_argument("--actor", required=True)
+    _add_occurred_at(admit_review)
+    _set_handler(admit_review, _continuity_admit_review)
+
+    continuity_verify = continuity_commands.add_parser("verify")
+    continuity_verify.add_argument("--incident-id", required=True)
+    _set_handler(continuity_verify, _continuity_verify)
+
+    publish_recovery = continuity_commands.add_parser("publish-recovery")
+    publish_recovery.add_argument("--incident-id", required=True)
+    publish_recovery.add_argument("--review-id", required=True)
+    publish_recovery.add_argument("--publication-id", required=True)
+    publish_recovery.add_argument("--idempotency-key", required=True)
+    publish_recovery.add_argument("--decision-id", required=True)
+    publish_recovery.add_argument("--actor", required=True)
+    _add_occurred_at(publish_recovery)
+    _set_handler(publish_recovery, _continuity_publish_recovery)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
