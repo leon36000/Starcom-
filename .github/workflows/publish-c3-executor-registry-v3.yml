@@ -1,0 +1,134 @@
+name: Publish idempotent hardened STARCOM C3 executor registry v3
+
+on:
+  push:
+    branches:
+      - control/c3-executor-registry-20260814
+    paths:
+      - '.control/c3-executor-registry/**'
+      - '.github/workflows/publish-c3-executor-registry-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-executor-registry-publication-v3
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-executor-registry-20260814
+          fetch-depth: 0
+
+      - name: Preserve and harden bounded implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-executor-registry
+          cp .control/c3-executor-registry/executor_registry.py /tmp/starcom-c3-executor-registry/
+          python3 .control/c3-executor-registry/harden_verifier.py
+          python3 .control/c3-executor-registry/harden_idempotency.py
+          sha256sum /tmp/starcom-c3-executor-registry/executor_registry.py
+
+      - name: Freeze current main and latest RED branch
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin main agent/c3-executor-registry
+          base="$(git rev-parse origin/main)"
+          head="$(git rev-parse origin/agent/c3-executor-registry)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          test "$(git merge-base "$base" "$head")" = "$base"
+          git switch -C fix/c3-executor-registry-v3 "$head"
+          test -f tests/test_executor_registry.py
+          test -f tests/test_executor_registry_hardening.py
+          test -f tests/test_executor_registry_idempotency.py
+          grep -Fq 'RED seam for exact, qualified, enabled and revocable executors' src/starcom/executor_registry.py
+
+      - name: Re-prove exact registry RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'registry': unittest.defaultTestLoader.discover('tests', pattern='test_executor_registry.py').countTestCases(),
+              'hardening': unittest.defaultTestLoader.discover('tests', pattern='test_executor_registry_hardening.py').countTestCases(),
+              'idempotency': unittest.defaultTestLoader.discover('tests', pattern='test_executor_registry_idempotency.py').countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          expected = {'registry': 9, 'hardening': 7, 'idempotency': 2, 'total': 252}
+          print(counts)
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+          for suite in executor_registry executor_registry_hardening executor_registry_idempotency; do
+            set +e
+            python3 -m unittest discover -s tests -p "test_${suite}.py" -v > "/tmp/starcom-c3-executor-registry/red-${suite}.log" 2>&1
+            status=$?
+            set -e
+            cat "/tmp/starcom-c3-executor-registry/red-${suite}.log"
+            test "$status" -ne 0
+            grep -Fq 'C3 executor registry is not implemented' "/tmp/starcom-c3-executor-registry/red-${suite}.log"
+          done
+          grep -Fq 'Ran 9 tests' /tmp/starcom-c3-executor-registry/red-executor_registry.log
+          grep -Fq 'Ran 7 tests' /tmp/starcom-c3-executor-registry/red-executor_registry_hardening.log
+          grep -Fq 'Ran 2 tests' /tmp/starcom-c3-executor-registry/red-executor_registry_idempotency.log
+
+      - name: Apply hardened implementation and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/starcom-c3-executor-registry/executor_registry.py src/starcom/executor_registry.py
+          ! grep -Fq 'C3 executor registry is not implemented' src/starcom/executor_registry.py
+          grep -Fq 'revoked executor replay conflicts with terminal material' src/starcom/executor_registry.py
+          grep -Fq 'existing executor qualification failed verification' src/starcom/executor_registry.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_executor_registry.py' -v
+          python3 -m unittest discover -s tests -p 'test_executor_registry_hardening.py' -v
+          python3 -m unittest discover -s tests -p 'test_executor_registry_idempotency.py' -v
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 252:
+              raise SystemExit(f'expected 252 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_executor_registry*.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Recheck refs and publish v3 branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main agent/c3-executor-registry
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse origin/agent/c3-executor-registry)" = '${{ steps.refs.outputs.head }}'
+          git commit -m 'feat: add idempotent hardened C3 executor registry'
+          git push origin 'HEAD:refs/heads/fix/c3-executor-registry-v3'
+          git rev-parse HEAD
