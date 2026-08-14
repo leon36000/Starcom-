@@ -160,8 +160,9 @@ class DurableOutbox:
             raise NotFoundError("effect does not exist", {"effect_id": effect_id})
         return self._row_to_record(row)
 
-    def enqueue(
+    def enqueue_in_transaction(
         self,
+        connection: sqlite3.Connection,
         *,
         effect_id: str | None = None,
         topic: str,
@@ -189,55 +190,78 @@ class DurableOutbox:
         }
         request_digest = sha256_digest(request_material)
 
+        existing = connection.execute(
+            "SELECT * FROM durable_effects WHERE effect_id = ?",
+            (effect_id,),
+        ).fetchone()
+        if existing is not None:
+            if str(existing["request_digest"]) != request_digest:
+                raise ConflictError(
+                    "effect idempotency key was reused with a different payload",
+                    {"effect_id": effect_id},
+                )
+            return self._row_to_record(existing)
+        receipt = self.ledger.append_in_transaction(
+            connection,
+            f"durable:effect:{effect_id}",
+            "EFFECT_ENQUEUED",
+            request_material | {"available_at": available_at},
+            actor=actor,
+            occurred_at=occurred_at,
+        )
+        connection.execute(
+            """
+            INSERT INTO durable_effects (
+                effect_id, topic, payload_json, request_digest, status,
+                attempt_count, max_attempts, available_at, lease_owner,
+                lease_token, lease_expires_at, last_error, result_digest,
+                created_at, updated_at, ledger_event_id, ledger_hash
+            ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+            """,
+            (
+                effect_id,
+                topic,
+                payload_json,
+                request_digest,
+                EffectStatus.PENDING.value,
+                max_attempts,
+                available_at,
+                occurred_at,
+                occurred_at,
+                receipt.event_id,
+                receipt.record_hash,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM durable_effects WHERE effect_id = ?",
+            (effect_id,),
+        ).fetchone()
+        assert row is not None
+        return self._row_to_record(row)
+
+    def enqueue(
+        self,
+        *,
+        effect_id: str | None = None,
+        topic: str,
+        payload: Mapping[str, Any],
+        max_attempts: int = 3,
+        available_at: str | None = None,
+        actor: str,
+        occurred_at: str | None = None,
+    ) -> EffectRecord:
         with self.database.transaction() as connection:
-            existing = connection.execute(
-                "SELECT * FROM durable_effects WHERE effect_id = ?",
-                (effect_id,),
-            ).fetchone()
-            if existing is not None:
-                if str(existing["request_digest"]) != request_digest:
-                    raise ConflictError(
-                        "effect idempotency key was reused with a different payload",
-                        {"effect_id": effect_id},
-                    )
-                return self._row_to_record(existing)
-            receipt = self.ledger.append_in_transaction(
+            return self.enqueue_in_transaction(
                 connection,
-                f"durable:effect:{effect_id}",
-                "EFFECT_ENQUEUED",
-                request_material | {"available_at": available_at},
+                effect_id=effect_id,
+                topic=topic,
+                payload=payload,
+                max_attempts=max_attempts,
+                available_at=available_at,
                 actor=actor,
                 occurred_at=occurred_at,
             )
-            connection.execute(
-                """
-                INSERT INTO durable_effects (
-                    effect_id, topic, payload_json, request_digest, status,
-                    attempt_count, max_attempts, available_at, lease_owner,
-                    lease_token, lease_expires_at, last_error, result_digest,
-                    created_at, updated_at, ledger_event_id, ledger_hash
-                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
-                """,
-                (
-                    effect_id,
-                    topic,
-                    payload_json,
-                    request_digest,
-                    EffectStatus.PENDING.value,
-                    max_attempts,
-                    available_at,
-                    occurred_at,
-                    occurred_at,
-                    receipt.event_id,
-                    receipt.record_hash,
-                ),
-            )
-            row = connection.execute(
-                "SELECT * FROM durable_effects WHERE effect_id = ?",
-                (effect_id,),
-            ).fetchone()
-            assert row is not None
-            return self._row_to_record(row)
+
 
     def claim(
         self,
@@ -246,8 +270,11 @@ class DurableOutbox:
         now: str | None = None,
         lease_seconds: int = 60,
         limit: int = 1,
+        topic: str | None = None,
     ) -> list[EffectLease]:
         worker_id = self._required_text(worker_id, "worker_id")
+        if topic is not None:
+            topic = self._required_text(topic, "topic")
         if not isinstance(lease_seconds, int) or lease_seconds < 1:
             raise ValidationError("lease_seconds must be an integer >= 1")
         if not isinstance(limit, int) or limit < 1:
@@ -258,14 +285,20 @@ class DurableOutbox:
         leases: list[EffectLease] = []
 
         with self.database.transaction() as connection:
+            conditions = ["status = ?", "available_at <= ?"]
+            parameters: list[object] = [
+                EffectStatus.PENDING.value,
+                now,
+            ]
+            if topic is not None:
+                conditions.append("topic = ?")
+                parameters.append(topic)
+            parameters.append(limit)
             rows = connection.execute(
-                """
-                SELECT * FROM durable_effects
-                WHERE status = ? AND available_at <= ?
-                ORDER BY available_at, created_at, effect_id
-                LIMIT ?
-                """,
-                (EffectStatus.PENDING.value, now, limit),
+                "SELECT * FROM durable_effects WHERE "
+                + " AND ".join(conditions)
+                + " ORDER BY available_at, created_at, effect_id LIMIT ?",
+                tuple(parameters),
             ).fetchall()
             for row in rows:
                 effect_id = str(row["effect_id"])
