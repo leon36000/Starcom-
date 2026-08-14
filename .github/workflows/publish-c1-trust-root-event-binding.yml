@@ -1,0 +1,106 @@
+name: Publish verified STARCOM C1 trust-root event binding
+
+on:
+  push:
+    branches:
+      - control/c1-trust-root-event-binding-20260813
+    paths:
+      - '.control/c1-trust-root-event-binding/**'
+      - '.github/workflows/publish-c1-trust-root-event-binding.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c1-trust-root-event-binding-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c1-trust-root-event-binding-20260813
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c1-event-binding
+          cp .control/c1-trust-root-event-binding/apply_patch.py /tmp/starcom-c1-event-binding/
+          sha256sum /tmp/starcom-c1-event-binding/apply_patch.py
+
+      - name: Establish exact RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git switch -C fix/c1-trust-root-event-binding fcb4e8df17ecd40940f7c7a29d28704304f67687
+          test "$(git rev-parse HEAD)" = "fcb4e8df17ecd40940f7c7a29d28704304f67687"
+
+      - name: Re-prove provenance tests RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -m unittest discover -s tests -p 'test_continuity_verification.py' -v > /tmp/starcom-c1-event-binding/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-c1-event-binding/red.log
+          test "$red_status" -ne 0
+          for test_name in \
+            test_verifier_detects_trust_root_cross_stream_repointing \
+            test_verifier_detects_trust_root_ledger_actor_repointing \
+            test_verifier_detects_trust_root_ledger_timestamp_repointing; do
+            grep -Fq "$test_name" /tmp/starcom-c1-event-binding/red.log
+          done
+          failures="$(grep -c '^FAIL:' /tmp/starcom-c1-event-binding/red.log || true)"
+          test "$failures" -eq 3
+
+      - name: Apply exact provenance binding and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c1-event-binding/apply_patch.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_continuity_verification.py' -v
+          python3 - <<'PY'
+          import unittest
+          count = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={count}')
+          if count != 93:
+              raise SystemExit(f'expected 93 tests, found {count}')
+          PY
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git commit -m 'fix: bind C1 trust root to exact ledger provenance'
+          git push origin 'HEAD:refs/heads/fix/c1-trust-root-event-binding'
+          git rev-parse HEAD
