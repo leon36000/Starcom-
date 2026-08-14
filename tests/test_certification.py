@@ -317,6 +317,7 @@ class C2SignedCertificationTests(unittest.TestCase):
         return self.admit(payload), payload
 
     def test_below_target_is_rejected(self) -> None:
+        self.add_identity(0)
         payload = self.certification_payload(certificate_id="certificate-below-target")
 
         with self.assertRaisesRegex(
