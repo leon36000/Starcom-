@@ -1,0 +1,107 @@
+name: Publish verified unified continuity type authority
+
+on:
+  push:
+    branches:
+      - control/unify-continuity-types-20260814
+    paths:
+      - '.control/unify-continuity-types/**'
+      - '.github/workflows/publish-unified-continuity-types.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-unified-continuity-types-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/unify-continuity-types-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-continuity-types
+          cp .control/unify-continuity-types/apply_patch.py /tmp/starcom-continuity-types/
+          sha256sum /tmp/starcom-continuity-types/apply_patch.py
+
+      - name: Establish exact RED baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C fix/unify-continuity-types 720b617858a42e034d1579c9735545dd425ad1b3
+          test "$(git rev-parse HEAD)" = "720b617858a42e034d1579c9735545dd425ad1b3"
+
+      - name: Re-prove type authority RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -m unittest discover -s tests -p 'test_continuity_type_authority.py' -v > /tmp/starcom-continuity-types/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-continuity-types/red.log
+          test "$red_status" -ne 0
+          grep -Fq 'test_serialized_contract_values_are_preserved' /tmp/starcom-continuity-types/red.log
+          grep -Fq 'test_service_exports_are_exact_canonical_contract_classes' /tmp/starcom-continuity-types/red.log
+          grep -Fq 'test_service_returns_canonical_incident_record' /tmp/starcom-continuity-types/red.log
+          failures="$(grep -c '^FAIL:' /tmp/starcom-continuity-types/red.log || true)"
+          test "$failures" -eq 8
+
+      - name: Apply bounded type unification and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-continuity-types/apply_patch.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_continuity_type_authority.py' -v
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover('tests', pattern='test_continuity_type_authority.py').countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 3:
+              raise SystemExit(f'expected 3 type-authority tests, found {focused}')
+          if total != 118:
+              raise SystemExit(f'expected 118 tests, found {total}')
+          PY
+          python3 -m unittest discover -s tests -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          for seed in 0 1 7 42 999; do
+            PYTHONHASHSEED="$seed" python3 -m unittest discover -s tests
+          done
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests
+          git add -A
+          git diff --cached --check
+
+      - name: Publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'refactor: unify C1 continuity contract type authority'
+          git push origin 'HEAD:refs/heads/fix/unify-continuity-types'
+          git rev-parse HEAD
