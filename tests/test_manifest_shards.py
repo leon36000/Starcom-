@@ -17,6 +17,15 @@ class ManifestShardTests(unittest.TestCase):
             shard.write_text(f"{rendered}  src/example.py\n", encoding="utf-8")
             self.assertEqual(load_manifest_shards([shard]), {"src/example.py": digest})
 
+    def test_load_reassembles_eight_short_segments(self) -> None:
+        digest = "c" * 64
+        rendered = ":".join(["c" * 8] * 8)
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            shard = root / "MANIFEST.00.sha256"
+            shard.write_text(f"{rendered}  src/example.py\n", encoding="utf-8")
+            self.assertEqual(load_manifest_shards([shard]), {"src/example.py": digest})
+
     def test_duplicate_path_across_shards_is_rejected(self) -> None:
         rendered = ":".join(["b" * 16] * 4)
         with tempfile.TemporaryDirectory() as tempdir:
