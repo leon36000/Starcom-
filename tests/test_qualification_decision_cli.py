@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-from test_qualification_cli import QualificationAndC3CliTests as CertifiedC2Fixture
+import test_qualification_cli as qualification_cli_fixture
 
 
 C0 = "2026-08-14T12:00:00.000000Z"
@@ -25,20 +25,22 @@ C6 = "2026-08-14T12:06:00.000000Z"
 class C3DecisionCliTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        CertifiedC2Fixture.setUpClass()
-        cls.repo_root = CertifiedC2Fixture.repo_root
-        cls.base_db_path = CertifiedC2Fixture.base_db_path
-        cls.base_root = CertifiedC2Fixture.base_root
+        fixture = qualification_cli_fixture.QualificationAndC3CliTests
+        fixture.setUpClass()
+        cls.certified_c2_fixture = fixture
+        cls.repo_root = fixture.repo_root
+        cls.base_db_path = fixture.base_db_path
+        cls.base_root = fixture.base_root
         cls.decision_private = cls.base_root / "c3-decision-private.pem"
         cls.decision_public = cls.base_root / "c3-decision-public.pem"
-        CertifiedC2Fixture._generate_keypair(
+        fixture._generate_keypair(
             cls.decision_private,
             cls.decision_public,
         )
 
     @classmethod
     def tearDownClass(cls) -> None:
-        CertifiedC2Fixture.tearDownClass()
+        cls.certified_c2_fixture.tearDownClass()
 
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
