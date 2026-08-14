@@ -35,14 +35,14 @@ jobs:
           cp .control/c3-decision-cli/apply_patch.py /tmp/starcom-c3-decision-cli/
           sha256sum /tmp/starcom-c3-decision-cli/apply_patch.py
 
-      - name: Establish exact RED baseline
+      - name: Establish exact isolated RED baseline
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'STARCOM Verification Bot'
           git config user.email 'starcom-verification-bot@users.noreply.github.com'
-          git switch -C fix/c3-decision-cli d932d7f2029ccf80b8ad486d254b205f05ef189f
-          test "$(git rev-parse HEAD)" = "d932d7f2029ccf80b8ad486d254b205f05ef189f"
+          git switch -C fix/c3-decision-cli ae5e2e5d73993d7b832ceaf8909479d805e9f6ac
+          test "$(git rev-parse HEAD)" = "ae5e2e5d73993d7b832ceaf8909479d805e9f6ac"
 
       - name: Re-prove exact C3 decision CLI RED
         shell: bash
@@ -98,8 +98,8 @@ jobs:
           print(f'test_count={total}')
           if focused != 4:
               raise SystemExit(f'expected 4 C3 decision CLI tests, found {focused}')
-          if total != 200:
-              raise SystemExit(f'expected 200 tests, found {total}')
+          if total != 196:
+              raise SystemExit(f'expected 196 tests, found {total}')
           PY
           python3 scripts/verify_repo.py
           python3 -m compileall -q src scripts tests
