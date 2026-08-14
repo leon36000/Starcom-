@@ -13,6 +13,7 @@ from typing import Any
 from . import __version__
 from .canonical import canonical_json
 from .census import C2CensusService
+from .certification import C2CertificationService
 from .continuity import ContinuityService
 from .db import Database
 from .errors import StarcomError, ValidationError
@@ -50,6 +51,7 @@ class Runtime:
     continuity: ContinuityService
     recollection: C2RecollectionService
     census: C2CensusService
+    certification: C2CertificationService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -64,6 +66,13 @@ class Runtime:
             continuity = ContinuityService(database, ledger, trust)
             recollection = C2RecollectionService(database, ledger, continuity, research)
             census = C2CensusService(database, ledger, recollection, research)
+            certification = C2CertificationService(
+                database,
+                ledger,
+                continuity,
+                recollection,
+                census,
+            )
             return cls(
                 database,
                 ledger,
@@ -74,6 +83,7 @@ class Runtime:
                 continuity,
                 recollection,
                 census,
+                certification,
             )
         except BaseException:
             database.close()
@@ -352,6 +362,43 @@ def _census_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int
 def _census_assess(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
     assessment = runtime.census.assess(args.recollection_id)
     return assessment, 0 if not assessment.defects else 3
+
+
+def _certification_snapshot(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    snapshot = runtime.certification.snapshot(args.recollection_id)
+    return {
+        "recollection_id": snapshot.recollection_id,
+        "incident_id": snapshot.incident_id,
+        "campaign_id": snapshot.campaign_id,
+        "identity_count": snapshot.identity_count,
+        "required_target": snapshot.required_target,
+        "identity_set_digest": snapshot.identity_set_digest,
+        "latest_identity_at": snapshot.latest_identity_at,
+    }, 0
+
+
+def _certification_admit(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    payload = _read_file_bytes(args.payload_file, "payload_file")
+    signature = _read_file_bytes(args.signature_file, "signature_file")
+    return runtime.certification.admit_certification(
+        args.recollection_id,
+        args.key_id,
+        payload,
+        signature,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _certification_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.certification.get_certificate(args.certificate_id), 0
+
+
+def _certification_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.certification.verify_certificate(args.certificate_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
 
 
 def _trust_add_rule(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
@@ -675,6 +722,35 @@ def build_parser() -> argparse.ArgumentParser:
     census_assess = census_commands.add_parser("assess")
     census_assess.add_argument("--recollection-id", required=True)
     _set_handler(census_assess, _census_assess)
+
+    certification = top.add_parser(
+        "certification",
+        help="manage exact-byte independently signed Task 5 C2 certifications",
+    )
+    certification_commands = certification.add_subparsers(
+        dest="certification_command", required=True
+    )
+
+    certification_snapshot = certification_commands.add_parser("snapshot")
+    certification_snapshot.add_argument("--recollection-id", required=True)
+    _set_handler(certification_snapshot, _certification_snapshot)
+
+    certification_admit = certification_commands.add_parser("admit")
+    certification_admit.add_argument("--recollection-id", required=True)
+    certification_admit.add_argument("--key-id", required=True)
+    certification_admit.add_argument("--payload-file", required=True)
+    certification_admit.add_argument("--signature-file", required=True)
+    certification_admit.add_argument("--actor", required=True)
+    _add_occurred_at(certification_admit)
+    _set_handler(certification_admit, _certification_admit)
+
+    certification_get = certification_commands.add_parser("get")
+    certification_get.add_argument("--certificate-id", required=True)
+    _set_handler(certification_get, _certification_get)
+
+    certification_verify = certification_commands.add_parser("verify")
+    certification_verify.add_argument("--certificate-id", required=True)
+    _set_handler(certification_verify, _certification_verify)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
