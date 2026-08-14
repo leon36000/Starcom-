@@ -18,8 +18,15 @@ jobs:
     steps:
       - name: Checkout exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Record runtime
-        run: python3 --version
+      - name: Record runtimes
+        run: |
+          python3 --version
+          openssl version
+      - name: Render candidate manifest
+        run: |
+          python3 scripts/build_manifest.py --write --manifest /tmp/STARCOM-MANIFEST.sha256
+          echo "===== candidate-manifest ====="
+          cat /tmp/STARCOM-MANIFEST.sha256
       - name: Verify repository
         env:
           PYTHONPATH: src:.
