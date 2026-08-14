@@ -229,6 +229,67 @@ class C2CensusIdentityTests(unittest.TestCase):
         )
         return observation_id, digest
 
+    def prepare_failed_evidence(self) -> tuple[str, str]:
+        attempt_id = "attempt-failed"
+        observation_id = "observation-failed"
+        source_id = "blocked-source"
+        content_digest = hashlib.sha256(b"failed-identity-evidence").hexdigest()
+        data = {"identity": "failed-identity", "fixture": True}
+        self.research.begin_attempt(
+            "c2-campaign",
+            attempt_id=attempt_id,
+            wave=1,
+            request_key="request-failed",
+            source_id=source_id,
+            request={"url": "https://example.invalid/blocked"},
+            actor="researcher",
+            occurred_at=T1,
+        )
+        self.research.record_receipt(
+            attempt_id,
+            receipt_id="receipt-failed",
+            outcome=ReceiptOutcome.POLICY_BLOCK,
+            status_code=403,
+            snapshot_digest=None,
+            metadata={"fixture": True},
+            actor="researcher",
+            occurred_at=T1,
+        )
+        payload = {
+            "observation_id": observation_id,
+            "attempt_id": attempt_id,
+            "snapshot_digest": SNAPSHOT,
+            "content_digest": content_digest,
+            "data": data,
+        }
+        event = self.ledger.append(
+            "research:campaign:c2-campaign",
+            "RESEARCH_OBSERVATION_RECORDED",
+            payload,
+            actor="fixture-forger",
+            occurred_at=T2,
+        )
+        with self.db.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO research_observations (
+                    observation_id, attempt_id, snapshot_digest, content_digest,
+                    data_json, observed_at, ledger_event_id, ledger_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_id,
+                    attempt_id,
+                    SNAPSHOT,
+                    content_digest,
+                    json.dumps(data, sort_keys=True, separators=(",", ":")),
+                    T2,
+                    event.event_id,
+                    event.record_hash,
+                ),
+            )
+        return attempt_id, observation_id
+
     def register(
         self,
         index: int,
@@ -311,6 +372,46 @@ class C2CensusIdentityTests(unittest.TestCase):
             "C2 recollection verification failed",
         ):
             self.register(1)
+
+    def test_failed_attempt_evidence_is_rejected(self) -> None:
+        attempt_id, observation_id = self.prepare_failed_evidence()
+
+        with self.assertRaisesRegex(
+            StateTransitionError,
+            "identity evidence requires a successful attempt",
+        ):
+            self.census.register_identity(
+                "c2-run",
+                identity_id="identity-failed",
+                identity_key="failed-person",
+                source_id="blocked-source",
+                attempt_id=attempt_id,
+                observation_id=observation_id,
+                actor="researcher",
+                occurred_at=T3,
+            )
+
+    def test_verifier_detects_identity_evidence_digest_tampering(self) -> None:
+        self.prepare_success_attempt()
+        self.add_observation(1)
+        record = self.register(1)
+        self.db.connection.execute("DROP TRIGGER c2_census_identities_no_update")
+        self.db.connection.execute(
+            "UPDATE c2_census_identities SET evidence_digest = ? WHERE identity_id = ?",
+            ("0" * 64, record.identity_id),
+        )
+
+        verification = self.census.verify("c2-run")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            f"C2_IDENTITY_EVIDENCE_DIGEST_MISMATCH:{record.identity_id}",
+            verification.defects,
+        )
+        self.assertIn(
+            f"C2_IDENTITY_LEDGER_PAYLOAD_MISMATCH:{record.identity_id}",
+            verification.defects,
+        )
 
     def test_verifier_detects_repointed_identity_event(self) -> None:
         self.prepare_success_attempt()
