@@ -1,0 +1,85 @@
+name: Diagnose STARCOM C3 executor registry
+
+on:
+  push:
+    branches:
+      - control/c3-executor-registry-20260814
+    paths:
+      - '.github/workflows/diagnose-c3-executor-registry.yml'
+      - '.control/c3-executor-registry/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-executor-registry-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-executor-registry-20260814
+          fetch-depth: 0
+
+      - name: Build diagnostic candidate
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Diagnostic Bot'
+          git config user.email 'starcom-diagnostic-bot@users.noreply.github.com'
+          git fetch origin main agent/c3-executor-registry
+          base="$(git rev-parse origin/main)"
+          head="$(git rev-parse origin/agent/c3-executor-registry)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          git switch -C diagnostic/c3-executor-registry "$head"
+          cp .control/c3-executor-registry/executor_registry.py src/starcom/executor_registry.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Run focused diagnostic
+        id: tests
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set +e
+          python3 -m unittest discover -s tests -p 'test_executor_registry.py' -v > /tmp/registry.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish sanitized diagnostic report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .diagnostics/c3-executor-registry
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          log_path = Path('/tmp/registry.log')
+          text = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else 'diagnostic log missing'
+          lines = text.splitlines()
+          report = {
+              'base_sha': '${{ steps.refs.outputs.base }}',
+              'agent_sha': '${{ steps.refs.outputs.head }}',
+              'focused_exit_code': int('${{ steps.tests.outputs.status || '99' }}'),
+              'line_count': len(lines),
+              'tail': lines[-220:],
+          }
+          Path('.diagnostics/c3-executor-registry/latest.json').write_text(
+              json.dumps(report, indent=2, ensure_ascii=False) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          git add MANIFEST.sha256 src/starcom/executor_registry.py .diagnostics/c3-executor-registry/latest.json
+          git commit -m 'diagnostic: record C3 executor registry focused result'
+          git push --force origin 'HEAD:refs/heads/diagnostic/c3-executor-registry'
