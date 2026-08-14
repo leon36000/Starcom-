@@ -12,11 +12,13 @@ from typing import Any
 
 from . import __version__
 from .adoption import C3AdoptionService
+from .adoption_execution import C3AdoptionExecutionService
 from .canonical import canonical_json
 from .census import C2CensusService
 from .certification import C2CertificationService
 from .continuity import ContinuityService
 from .db import Database
+from .durable import DurableOutbox
 from .errors import StarcomError, ValidationError
 from .ledger import EventLedger
 from .mission import MissionKernel, MissionState
@@ -60,6 +62,8 @@ class Runtime:
     c3: C3QualificationGate
     c3_decision: C3DecisionService
     adoption: C3AdoptionService
+    outbox: DurableOutbox
+    adoption_execution: C3AdoptionExecutionService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -104,6 +108,15 @@ class Runtime:
                 c3_decision,
                 qualification,
             )
+            outbox = DurableOutbox(database, ledger)
+            adoption_execution = C3AdoptionExecutionService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                adoption,
+                outbox,
+            )
             return cls(
                 database,
                 ledger,
@@ -119,6 +132,8 @@ class Runtime:
                 c3,
                 c3_decision,
                 adoption,
+                outbox,
+                adoption_execution,
             )
         except BaseException:
             database.close()
@@ -571,6 +586,50 @@ def _adoption_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]
 
 def _adoption_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
     verification = runtime.adoption.verify_adoption(args.adoption_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _adoption_execution_prepare(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.adoption_execution.prepare(
+        args.execution_id,
+        adoption_id=args.adoption_id,
+        executor_id=args.executor_id,
+        execution_plan=_json_object(
+            args.execution_plan_json,
+            "execution_plan_json",
+        ),
+    ), 0
+
+
+def _adoption_execution_request(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.adoption_execution.request_execution(
+        args.execution_id,
+        adoption_id=args.adoption_id,
+        executor_id=args.executor_id,
+        execution_plan=_json_object(
+            args.execution_plan_json,
+            "execution_plan_json",
+        ),
+        authorization_decision_id=args.authorization_decision_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _adoption_execution_get(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    return runtime.adoption_execution.get_execution(args.execution_id), 0
+
+
+def _adoption_execution_verify(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    verification = runtime.adoption_execution.verify_execution(args.execution_id)
     return _verification_payload(verification), 0 if verification.ok else 3
 
 
@@ -1051,6 +1110,43 @@ def build_parser() -> argparse.ArgumentParser:
     adoption_verify = adoption_commands.add_parser("verify")
     adoption_verify.add_argument("--adoption-id", required=True)
     _set_handler(adoption_verify, _adoption_verify)
+
+    adoption_execution = top.add_parser(
+        "adoption-execution",
+        help="admit durable C3 execution requests without running a worker",
+    )
+    adoption_execution_commands = adoption_execution.add_subparsers(
+        dest="adoption_execution_command",
+        required=True,
+    )
+
+    execution_prepare = adoption_execution_commands.add_parser("prepare")
+    execution_prepare.add_argument("--execution-id", required=True)
+    execution_prepare.add_argument("--adoption-id", required=True)
+    execution_prepare.add_argument("--executor-id", required=True)
+    execution_prepare.add_argument("--execution-plan-json", required=True)
+    _set_handler(execution_prepare, _adoption_execution_prepare)
+
+    execution_request = adoption_execution_commands.add_parser("request")
+    execution_request.add_argument("--execution-id", required=True)
+    execution_request.add_argument("--adoption-id", required=True)
+    execution_request.add_argument("--executor-id", required=True)
+    execution_request.add_argument("--execution-plan-json", required=True)
+    execution_request.add_argument(
+        "--authorization-decision-id",
+        required=True,
+    )
+    execution_request.add_argument("--actor", required=True)
+    _add_occurred_at(execution_request)
+    _set_handler(execution_request, _adoption_execution_request)
+
+    execution_get = adoption_execution_commands.add_parser("get")
+    execution_get.add_argument("--execution-id", required=True)
+    _set_handler(execution_get, _adoption_execution_get)
+
+    execution_verify = adoption_execution_commands.add_parser("verify")
+    execution_verify.add_argument("--execution-id", required=True)
+    _set_handler(execution_verify, _adoption_execution_verify)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
