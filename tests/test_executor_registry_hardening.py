@@ -200,6 +200,13 @@ class C3ExecutorRegistryHardeningTests(unittest.TestCase):
             "C3_EXECUTOR_CONSUMPTION_MISMATCH:1",
             registration_verification.defects,
         )
+        self.database.connection.execute(
+            """
+            UPDATE continuity_authorization_consumptions SET operation_id = ?
+            WHERE decision_id = ?
+            """,
+            ("fake-executor", descriptor.authorization_decision_id),
+        )
 
         self.helper.accept_root()
         self.helper.qualify()
