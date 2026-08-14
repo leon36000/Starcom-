@@ -500,11 +500,22 @@ class C3QualificationGate:
 
         artifacts = self.database.connection.execute(
             """
-            SELECT artifact_id, recorded_at FROM qualification_artifacts
+            SELECT artifact_id, kind, recorded_at FROM qualification_artifacts
             WHERE qualification_run_id = ? ORDER BY artifact_id
             """,
             (binding.qualification_run_id,),
         ).fetchall()
+        for artifact in artifacts:
+            artifact_id = str(artifact["artifact_id"])
+            artifact_kind = str(artifact["kind"])
+            if artifact_kind == "DECISION":
+                defects.append(
+                    f"C3_UNGOVERNED_DECISION_ARTIFACT:{artifact_id}"
+                )
+            elif artifact_kind == "ADOPTION":
+                defects.append(
+                    f"C3_UNAUTHORIZED_ADOPTION_ARTIFACT:{artifact_id}"
+                )
         try:
             binding_time = datetime.fromisoformat(
                 binding.started_at.replace("Z", "+00:00")
