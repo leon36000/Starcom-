@@ -1,0 +1,146 @@
+name: Publish verified STARCOM C3 executor registry
+
+on:
+  push:
+    branches:
+      - control/c3-executor-registry-20260814
+    paths:
+      - '.control/c3-executor-registry/**'
+      - '.github/workflows/publish-c3-executor-registry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-executor-registry-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-executor-registry-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded implementation outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-executor-registry
+          cp .control/c3-executor-registry/executor_registry.py /tmp/starcom-c3-executor-registry/
+          sha256sum /tmp/starcom-c3-executor-registry/executor_registry.py
+
+      - name: Freeze verified main and registry RED branch
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin main agent/c3-executor-registry
+          base="$(git rev-parse origin/main)"
+          head="$(git rev-parse origin/agent/c3-executor-registry)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base"
+          echo "head=$head"
+          test "$(git merge-base "$base" "$head")" = "$base"
+          git switch -C fix/c3-executor-registry "$head"
+          test -f src/starcom/adoption_execution.py
+          ! grep -Fq 'C3 adoption execution is not implemented' src/starcom/adoption_execution.py
+          test -f tests/test_adoption_execution_hardening.py
+          test -f tests/test_adoption_execution_cli.py
+          test -f src/starcom/executor_registry.py
+          test -f tests/test_executor_registry.py
+          grep -Fq 'RED seam for exact, qualified, enabled and revocable executors' src/starcom/executor_registry.py
+
+      - name: Re-prove exact executor registry RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_executor_registry.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 9:
+              raise SystemExit(f'expected 9 executor registry tests, found {focused}')
+          if total != 243:
+              raise SystemExit(f'expected 243 tests, found {total}')
+          PY
+          set +e
+          python3 -m unittest discover -s tests -p 'test_executor_registry.py' -v > /tmp/starcom-c3-executor-registry/red.log 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/starcom-c3-executor-registry/red.log
+          test "$red_status" -ne 0
+          grep -Fq 'Ran 9 tests' /tmp/starcom-c3-executor-registry/red.log
+          grep -Fq 'C3 executor registry is not implemented' /tmp/starcom-c3-executor-registry/red.log
+          ! grep -Fq 'ImportError' /tmp/starcom-c3-executor-registry/red.log
+          ! grep -Fq 'ModuleNotFoundError' /tmp/starcom-c3-executor-registry/red.log
+          for test_name in \
+            test_registration_is_default_deny_and_remains_disabled \
+            test_registration_replay_is_idempotent_and_material_conflict_fails \
+            test_qualifier_root_is_separately_default_denied \
+            test_exact_signed_qualification_does_not_enable \
+            test_modified_payload_with_original_signature_is_rejected \
+            test_reviewer_must_be_independent_from_registrant \
+            test_enable_requires_separate_exact_decision_and_attests_runtime \
+            test_revocation_is_immediate_and_terminal \
+            test_verifier_detects_descriptor_and_consumption_tampering; do
+            grep -Fq "$test_name" /tmp/starcom-c3-executor-registry/red.log
+          done
+
+      - name: Apply bounded executor registry authority and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/starcom-c3-executor-registry/executor_registry.py src/starcom/executor_registry.py
+          test "$(grep -c '^class C3ExecutorRegistry:' src/starcom/executor_registry.py)" -eq 1
+          test "$(grep -c '^class C3ExecutorState' src/starcom/executor_registry.py)" -eq 1
+          test "$(grep -c '^class C3ExecutorQualifierRoot' src/starcom/executor_registry.py)" -eq 1
+          ! grep -Fq 'C3 executor registry is not implemented' src/starcom/executor_registry.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_executor_registry.py' -v
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 243:
+              raise SystemExit(f'expected 243 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_executor_registry.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Recheck immutable refs and publish verified feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main agent/c3-executor-registry
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse origin/agent/c3-executor-registry)" = '${{ steps.refs.outputs.head }}'
+          git commit -m 'feat: add signed and revocable C3 executor registry'
+          git push origin 'HEAD:refs/heads/fix/c3-executor-registry'
+          git rev-parse HEAD
