@@ -1,0 +1,133 @@
+name: Publish verified STARCOM registry-attested C3 worker
+
+on:
+  push:
+    branches:
+      - control/c3-executor-worker-attestation-20260814
+    paths:
+      - '.control/c3-executor-worker-attestation/**'
+      - '.github/workflows/publish-c3-executor-worker-attestation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-executor-worker-attestation-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-executor-worker-attestation-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-worker-attestation
+          cp .control/c3-executor-worker-attestation/apply_patch.py /tmp/starcom-c3-worker-attestation/
+          sha256sum /tmp/starcom-c3-worker-attestation/apply_patch.py
+
+      - name: Freeze verified registry main and worker RED branch
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin main agent/c3-executor-worker-attestation
+          base="$(git rev-parse origin/main)"
+          head="$(git rev-parse origin/agent/c3-executor-worker-attestation)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base"
+          echo "head=$head"
+          test "$(git merge-base "$base" "$head")" = "$base"
+          git switch -C fix/c3-executor-worker-attestation "$head"
+          test -f src/starcom/executor_registry.py
+          ! grep -Fq 'C3 executor registry is not implemented' src/starcom/executor_registry.py
+          test -f tests/test_executor_registry_hardening.py
+          test -f tests/test_executor_worker_attestation.py
+
+      - name: Re-prove exact worker attestation RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_executor_worker_attestation.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 10:
+              raise SystemExit(f'expected 10 worker attestation tests, found {focused}')
+          if total != 260:
+              raise SystemExit(f'expected 260 tests, found {total}')
+          PY
+          set +e
+          python3 -m unittest discover -s tests -p 'test_executor_worker_attestation.py' -v > /tmp/starcom-c3-worker-attestation/red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/starcom-c3-worker-attestation/red.log
+          test "$status" -ne 0
+          grep -Fq 'Ran 10 tests' /tmp/starcom-c3-worker-attestation/red.log
+          grep -Fq 'C3AdoptionExecutionWorker' /tmp/starcom-c3-worker-attestation/red.log
+          ! grep -Fq 'ImportError' /tmp/starcom-c3-worker-attestation/red.log
+          ! grep -Fq 'ModuleNotFoundError' /tmp/starcom-c3-worker-attestation/red.log
+
+      - name: Apply registry attestation patch and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c3-worker-attestation/apply_patch.py
+          grep -Fq 'registry: C3ExecutorRegistry' src/starcom/adoption_execution.py
+          grep -Fq 'executor-registry-attestation' src/starcom/adoption_execution.py
+          grep -Fq 'implementation_version: str' src/starcom/adoption_execution.py
+          grep -Fq 'implementation_digest: str' src/starcom/adoption_execution.py
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_adoption_execution.py' -v
+          python3 -m unittest discover -s tests -p 'test_adoption_execution_hardening.py' -v
+          python3 -m unittest discover -s tests -p 'test_executor_worker_attestation.py' -v
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 260:
+              raise SystemExit(f'expected 260 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_*execution*.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Recheck immutable refs and publish feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main agent/c3-executor-worker-attestation
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse origin/agent/c3-executor-worker-attestation)" = '${{ steps.refs.outputs.head }}'
+          git commit -m 'feat: require executor registry attestation before C3 effects'
+          git push origin 'HEAD:refs/heads/fix/c3-executor-worker-attestation'
+          git rev-parse HEAD
