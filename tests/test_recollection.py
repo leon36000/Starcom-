@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from starcom.continuity import ContinuityService
+from starcom.continuity import ContinuityService, IncidentStatus
 from starcom.db import Database
 from starcom.errors import ConflictError, IntegrityError, StateTransitionError, ValidationError
 from starcom.ledger import EventLedger
@@ -127,7 +127,7 @@ class C2RecollectionGateTests(unittest.TestCase):
             "allow-c2-recovery",
             T3,
         )
-        self.continuity.publish_recovery(
+        publication = self.continuity.publish_recovery(
             "task5",
             review.review_id,
             publication_id="publication-c2",
@@ -136,6 +136,17 @@ class C2RecollectionGateTests(unittest.TestCase):
             actor="owner",
             occurred_at=T3,
         )
+        self.assertEqual(
+            publication.status,
+            IncidentStatus.RECOVERY_PUBLISHED_RECOLLECT_REQUIRED,
+        )
+        incident = self.continuity.get_incident("task5")
+        self.assertEqual(
+            incident.status,
+            IncidentStatus.RECOVERY_PUBLISHED_RECOLLECT_REQUIRED,
+        )
+        verification = self.continuity.verify_incident("task5")
+        self.assertTrue(verification.ok, verification.defects)
 
     def start(self, **overrides: object):
         values: dict[str, object] = {
