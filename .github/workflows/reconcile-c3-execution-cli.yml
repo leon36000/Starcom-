@@ -1,0 +1,96 @@
+name: Reconcile verified STARCOM C3 execution admission CLI
+
+on:
+  push:
+    branches:
+      - control/c3-execution-cli-reconcile-20260814
+    paths:
+      - '.github/workflows/reconcile-c3-execution-cli.yml'
+      - '.control/c3-execution-cli-reconcile/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-main-integration
+  cancel-in-progress: false
+
+jobs:
+  reconcile-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout reconciliation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-execution-cli-reconcile-20260814
+          fetch-depth: 0
+
+      - name: Freeze main and reconcile CLI feature
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main fix/c3-adoption-execution-cli || true
+          base="$(git rev-parse origin/main)"
+          feature="$(git rev-parse origin/fix/c3-adoption-execution-cli 2>/dev/null || true)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "feature=$feature" >> "$GITHUB_OUTPUT"
+          git switch -C reconcile/c3-execution-cli "$base"
+          test -f src/starcom/adoption_execution.py
+          ! grep -Fq 'C3 adoption execution is not implemented' src/starcom/adoption_execution.py
+          test -f tests/test_adoption_execution_hardening.py
+          if test -f tests/test_adoption_execution_cli.py && grep -Fq '"adoption-execution"' src/starcom/cli.py; then
+            echo "mode=already-integrated" >> "$GITHUB_OUTPUT"
+          else
+            test -n "$feature"
+            test "$(git merge-base "$base" "$feature")" = "$base"
+            git merge --no-ff --no-edit "$feature"
+            echo "mode=merge-feature" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify reconciled CLI repository completely
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          test -f tests/test_adoption_execution_cli.py
+          grep -Fq '"adoption-execution"' src/starcom/cli.py
+          ! grep -Fq 'C3AdoptionExecutionWorker' src/starcom/cli.py
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'execution_cli': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_adoption_execution_cli.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          print(counts)
+          expected = {'execution_cli': 4, 'total': 234}
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+          python3 -m unittest discover -s tests -p 'test_adoption_execution_cli.py' -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_adoption_execution_cli.py'
+          git diff '${{ steps.refs.outputs.base }}'..HEAD --check
+
+      - name: Recheck immutable refs and publish merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main fix/c3-adoption-execution-cli || true
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          if test '${{ steps.refs.outputs.mode }}' = 'merge-feature'; then
+            test "$(git rev-parse origin/fix/c3-adoption-execution-cli)" = '${{ steps.refs.outputs.feature }}'
+            git push origin 'HEAD:refs/heads/main'
+          else
+            test "$(git rev-parse HEAD)" = '${{ steps.refs.outputs.base }}'
+            echo 'verified non-executing execution CLI is already integrated'
+          fi
+          git rev-parse HEAD
