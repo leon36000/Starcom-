@@ -101,6 +101,33 @@ class ContinuityAuthorizationVerificationTests(unittest.TestCase):
         self.db.close()
         self.tempdir.cleanup()
 
+    def _root_row(self):
+        root = self.db.connection.execute(
+            "SELECT * FROM continuity_trust_roots WHERE key_id = ?",
+            ("reviewer-1",),
+        ).fetchone()
+        self.assertIsNotNone(root)
+        assert root is not None
+        return root
+
+    def _root_payload(self, root) -> dict[str, str]:
+        return {
+            "key_id": "reviewer-1",
+            "fingerprint_sha256": str(root["fingerprint_sha256"]),
+            "decision_id": str(root["decision_id"]),
+        }
+
+    def _repoint_root(self, event_id: str, record_hash: str) -> None:
+        self.db.connection.execute("DROP TRIGGER continuity_trust_roots_no_update")
+        self.db.connection.execute(
+            """
+            UPDATE continuity_trust_roots
+            SET ledger_event_id = ?, ledger_hash = ?
+            WHERE key_id = ?
+            """,
+            (event_id, record_hash, "reviewer-1"),
+        )
+
     def test_verifier_detects_trust_root_decision_tampering(self) -> None:
         self.db.connection.execute("DROP TRIGGER trust_decisions_no_update")
         self.db.connection.execute(
@@ -131,6 +158,82 @@ class ContinuityAuthorizationVerificationTests(unittest.TestCase):
         self.assertFalse(verification.ok)
         self.assertIn(
             "TRUST_ROOT_AUTHORIZATION_CONSUMPTION_MISMATCH:reviewer-1",
+            verification.defects,
+        )
+
+    def test_verifier_detects_trust_root_ledger_event_binding_tampering(self) -> None:
+        root = self._root_row()
+        forged = self.ledger.append(
+            "continuity:trust-root:reviewer-1",
+            "CONTINUITY_TRUST_ROOT_REBOUND",
+            self._root_payload(root),
+            actor="owner",
+            occurred_at=T2,
+        )
+        self._repoint_root(forged.event_id, forged.record_hash)
+
+        verification = self.service.verify_incident("task5")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            "TRUST_ROOT:reviewer-1_LEDGER_KIND_MISMATCH",
+            verification.defects,
+        )
+
+    def test_verifier_detects_trust_root_cross_stream_repointing(self) -> None:
+        root = self._root_row()
+        forged = self.ledger.append(
+            "continuity:trust-root:shadow-reviewer-1",
+            "CONTINUITY_TRUST_ROOT_ACCEPTED",
+            self._root_payload(root),
+            actor="owner",
+            occurred_at=T1,
+        )
+        self._repoint_root(forged.event_id, forged.record_hash)
+
+        verification = self.service.verify_incident("task5")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            "TRUST_ROOT:reviewer-1_LEDGER_STREAM_MISMATCH",
+            verification.defects,
+        )
+
+    def test_verifier_detects_trust_root_ledger_actor_repointing(self) -> None:
+        root = self._root_row()
+        forged = self.ledger.append(
+            "continuity:trust-root:reviewer-1",
+            "CONTINUITY_TRUST_ROOT_ACCEPTED",
+            self._root_payload(root),
+            actor="intruder",
+            occurred_at=T2,
+        )
+        self._repoint_root(forged.event_id, forged.record_hash)
+
+        verification = self.service.verify_incident("task5")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            "TRUST_ROOT:reviewer-1_LEDGER_ACTOR_MISMATCH",
+            verification.defects,
+        )
+
+    def test_verifier_detects_trust_root_ledger_timestamp_repointing(self) -> None:
+        root = self._root_row()
+        forged = self.ledger.append(
+            "continuity:trust-root:reviewer-1",
+            "CONTINUITY_TRUST_ROOT_ACCEPTED",
+            self._root_payload(root),
+            actor="owner",
+            occurred_at=T2,
+        )
+        self._repoint_root(forged.event_id, forged.record_hash)
+
+        verification = self.service.verify_incident("task5")
+
+        self.assertFalse(verification.ok)
+        self.assertIn(
+            "TRUST_ROOT:reviewer-1_LEDGER_TIMESTAMP_MISMATCH",
             verification.defects,
         )
 
