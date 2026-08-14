@@ -559,6 +559,22 @@ class C2CertificationService:
                         "C2 certification appeared during admission",
                         {"certificate_id": certificate_id},
                     )
+                current_public_key = self._assert_trust_root(key_id)
+                if not self.continuity.signature_verifier.verify(
+                    current_public_key,
+                    payload,
+                    signature,
+                ):
+                    raise IntegrityError("C2 certification signature is invalid")
+                current_census_verification = self.census.verify(recollection_id)
+                if not current_census_verification.ok:
+                    raise IntegrityError(
+                        "C2 census verification failed",
+                        {
+                            "recollection_id": recollection_id,
+                            "defects": list(current_census_verification.defects),
+                        },
+                    )
                 current_snapshot = self._snapshot_from_connection(
                     connection,
                     recollection_id,

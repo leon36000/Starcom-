@@ -466,5 +466,100 @@ class C2SignedCertificationTests(unittest.TestCase):
             self.admit(enlarged_payload)
 
 
+    def test_census_is_rechecked_inside_admission_transaction(self) -> None:
+        self.add_identities(800)
+        payload = self.certification_payload(
+            certificate_id="certificate-census-race"
+        )
+        signature = self.sign(CERTIFIER_KEY, payload)
+
+        class CensusTamperingService(C2CertificationService):
+            def _assert_independent(self, certifier_identity, snapshot):  # type: ignore[no-untyped-def]
+                super()._assert_independent(certifier_identity, snapshot)
+                self.database.connection.execute(
+                    "DROP TRIGGER research_observations_no_update"
+                )
+                self.database.connection.execute(
+                    """
+                    UPDATE research_observations
+                    SET content_digest = ?
+                    WHERE observation_id = ?
+                    """,
+                    ("0" * 64, "observation-0000"),
+                )
+
+        racing = CensusTamperingService(
+            self.db,
+            self.ledger,
+            self.continuity,
+            self.recollection,
+            self.census,
+        )
+
+        with self.assertRaisesRegex(
+            IntegrityError,
+            "C2 census verification failed",
+        ):
+            racing.admit_certification(
+                "c2-run",
+                "certifier-c2",
+                payload,
+                signature,
+                actor="admission-agent",
+                occurred_at=C10,
+            )
+        count = self.db.connection.execute(
+            "SELECT COUNT(*) FROM c2_certifications"
+        ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_trust_root_is_rechecked_inside_admission_transaction(self) -> None:
+        self.add_identities(800)
+        payload = self.certification_payload(
+            certificate_id="certificate-trust-root-race"
+        )
+        signature = self.sign(CERTIFIER_KEY, payload)
+
+        class TrustRootTamperingService(C2CertificationService):
+            def _assert_independent(self, certifier_identity, snapshot):  # type: ignore[no-untyped-def]
+                super()._assert_independent(certifier_identity, snapshot)
+                self.database.connection.execute(
+                    "DROP TRIGGER continuity_trust_roots_no_update"
+                )
+                self.database.connection.execute(
+                    """
+                    UPDATE continuity_trust_roots
+                    SET fingerprint_sha256 = ?
+                    WHERE key_id = ?
+                    """,
+                    ("0" * 64, "certifier-c2"),
+                )
+
+        racing = TrustRootTamperingService(
+            self.db,
+            self.ledger,
+            self.continuity,
+            self.recollection,
+            self.census,
+        )
+
+        with self.assertRaisesRegex(
+            IntegrityError,
+            "certifier trust root verification failed",
+        ):
+            racing.admit_certification(
+                "c2-run",
+                "certifier-c2",
+                payload,
+                signature,
+                actor="admission-agent",
+                occurred_at=C10,
+            )
+        count = self.db.connection.execute(
+            "SELECT COUNT(*) FROM c2_certifications"
+        ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
