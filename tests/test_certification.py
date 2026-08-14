@@ -340,7 +340,7 @@ class C2SignedCertificationTests(unittest.TestCase):
         self.add_identities(800)
         payload = self.certification_payload(
             certificate_id="certificate-not-independent",
-            certifier_identity="collector",
+            certifier_identity=" collector ",
         )
 
         with self.assertRaisesRegex(

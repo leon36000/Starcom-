@@ -441,9 +441,11 @@ class C2CertificationService:
         snapshot: C2CertificationSnapshot,
     ) -> None:
         recollection = self.recollection.get(snapshot.recollection_id)
-        disallowed = {recollection.started_by}
-        disallowed.update(str(member["recorded_by"]) for member in snapshot.members)
-        if certifier_identity in disallowed:
+        disallowed = {recollection.started_by.strip()}
+        disallowed.update(
+            str(member["recorded_by"]).strip() for member in snapshot.members
+        )
+        if certifier_identity.strip() in disallowed:
             raise StateTransitionError(
                 "certifier identity is not independent",
                 {
@@ -795,9 +797,10 @@ class C2CertificationService:
         if record.identity_count < record.required_target:
             defects.append("C2_CERT_THRESHOLD_NOT_MET")
 
+        normalized_actors = {actor.strip() for actor in represented_actors}
         if recollection is not None:
-            represented_actors.add(recollection.started_by)
-        if record.certifier_identity in represented_actors:
+            normalized_actors.add(recollection.started_by.strip())
+        if record.certifier_identity.strip() in normalized_actors:
             defects.append("C2_CERT_INDEPENDENCE_VIOLATION")
 
         if parsed is not None:
