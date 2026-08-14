@@ -18,6 +18,7 @@ from .errors import StarcomError, ValidationError
 from .ledger import EventLedger
 from .mission import MissionKernel, MissionState
 from .proof import ProofEngine, VerificationVerdict
+from .recollection import C2RecollectionService
 from .research import ReceiptOutcome, ResearchCampaign
 from .trust import (
     AuthorizationRequest,
@@ -46,6 +47,7 @@ class Runtime:
     missions: MissionKernel
     research: ResearchCampaign
     continuity: ContinuityService
+    recollection: C2RecollectionService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -58,7 +60,10 @@ class Runtime:
             missions = MissionKernel(database, ledger, trust, proof)
             research = ResearchCampaign(database, ledger)
             continuity = ContinuityService(database, ledger, trust)
-            return cls(database, ledger, trust, proof, missions, research, continuity)
+            recollection = C2RecollectionService(database, ledger, continuity, research)
+            return cls(
+                database, ledger, trust, proof, missions, research, continuity, recollection
+            )
         except BaseException:
             database.close()
             raise
@@ -289,6 +294,26 @@ def _continuity_publish_recovery(runtime: Runtime, args: argparse.Namespace) -> 
         actor=args.actor,
         occurred_at=args.occurred_at,
     ), 0
+
+
+def _recollection_start(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.recollection.start(
+        args.recollection_id,
+        incident_id=args.incident_id,
+        campaign_id=args.campaign_id,
+        minimum_identity_target=args.minimum_identity_target,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _recollection_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.recollection.get(args.recollection_id), 0
+
+
+def _recollection_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.recollection.verify(args.recollection_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
 
 
 def _trust_add_rule(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
@@ -558,6 +583,31 @@ def build_parser() -> argparse.ArgumentParser:
     publish_recovery.add_argument("--actor", required=True)
     _add_occurred_at(publish_recovery)
     _set_handler(publish_recovery, _continuity_publish_recovery)
+
+    recollection = top.add_parser(
+        "recollection",
+        help="manage the C1-gated Task 5 C2 recollection binding",
+    )
+    recollection_commands = recollection.add_subparsers(
+        dest="recollection_command", required=True
+    )
+
+    recollection_start = recollection_commands.add_parser("start")
+    recollection_start.add_argument("--recollection-id", required=True)
+    recollection_start.add_argument("--incident-id", required=True)
+    recollection_start.add_argument("--campaign-id", required=True)
+    recollection_start.add_argument("--minimum-identity-target", type=int, required=True)
+    recollection_start.add_argument("--actor", required=True)
+    _add_occurred_at(recollection_start)
+    _set_handler(recollection_start, _recollection_start)
+
+    recollection_get = recollection_commands.add_parser("get")
+    recollection_get.add_argument("--recollection-id", required=True)
+    _set_handler(recollection_get, _recollection_get)
+
+    recollection_verify = recollection_commands.add_parser("verify")
+    recollection_verify.add_argument("--recollection-id", required=True)
+    _set_handler(recollection_verify, _recollection_verify)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
