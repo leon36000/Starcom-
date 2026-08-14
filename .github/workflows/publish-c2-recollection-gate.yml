@@ -27,24 +27,25 @@ jobs:
           ref: control/c2-recollection-gate-20260814
           fetch-depth: 0
 
-      - name: Preserve bounded patch outside worktree
+      - name: Preserve and normalize bounded patch outside worktree
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/starcom-c2-gate
           cp .control/c2-recollection-gate/apply_patch.py /tmp/starcom-c2-gate/
+          python3 .control/c2-recollection-gate/normalize_patch.py
           sha256sum /tmp/starcom-c2-gate/apply_patch.py
 
-      - name: Establish exact RED baseline
+      - name: Establish exact strengthened RED baseline
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'STARCOM Verification Bot'
           git config user.email 'starcom-verification-bot@users.noreply.github.com'
-          git switch -C fix/c2-recollection-gate 4efc1a1b7afd82e864c9f822aaf40919659d40e6
-          test "$(git rev-parse HEAD)" = "4efc1a1b7afd82e864c9f822aaf40919659d40e6"
+          git switch -C fix/c2-recollection-gate ae7b951d599213684669268e968b5eb7e9406baa
+          test "$(git rev-parse HEAD)" = "ae7b951d599213684669268e968b5eb7e9406baa"
 
-      - name: Re-prove C2 gate contract RED
+      - name: Re-prove C2 gate contract RED with published-C1 fixture proof
         shell: bash
         env:
           PYTHONPATH: src:.
@@ -64,6 +65,10 @@ jobs:
           test "$failures" -eq 2
           test "$errors" -eq 5
           grep -Fq 'test_generic_research_remains_available_before_c1 (test_recollection.C2RecollectionGateTests.test_generic_research_remains_available_before_c1) ... ok' /tmp/starcom-c2-gate/red.log
+          if grep -Fq 'AssertionError: <IncidentStatus.RECOVERY_REQUIRED' /tmp/starcom-c2-gate/red.log; then
+            echo 'C1 fixture did not reach published state; refusing production patch.' >&2
+            exit 1
+          fi
 
       - name: Apply bounded C2 gate and refresh manifest
         shell: bash
