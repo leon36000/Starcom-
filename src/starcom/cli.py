@@ -12,6 +12,7 @@ from typing import Any
 
 from . import __version__
 from .canonical import canonical_json
+from .census import C2CensusService
 from .continuity import ContinuityService
 from .db import Database
 from .errors import StarcomError, ValidationError
@@ -48,6 +49,7 @@ class Runtime:
     research: ResearchCampaign
     continuity: ContinuityService
     recollection: C2RecollectionService
+    census: C2CensusService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -61,8 +63,17 @@ class Runtime:
             research = ResearchCampaign(database, ledger)
             continuity = ContinuityService(database, ledger, trust)
             recollection = C2RecollectionService(database, ledger, continuity, research)
+            census = C2CensusService(database, ledger, recollection, research)
             return cls(
-                database, ledger, trust, proof, missions, research, continuity, recollection
+                database,
+                ledger,
+                trust,
+                proof,
+                missions,
+                research,
+                continuity,
+                recollection,
+                census,
             )
         except BaseException:
             database.close()
@@ -314,6 +325,33 @@ def _recollection_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, 
 def _recollection_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
     verification = runtime.recollection.verify(args.recollection_id)
     return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _census_register(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.census.register_identity(
+        args.recollection_id,
+        identity_id=args.identity_id,
+        identity_key=args.identity_key,
+        source_id=args.source_id,
+        attempt_id=args.attempt_id,
+        observation_id=args.observation_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    ), 0
+
+
+def _census_get(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    return runtime.census.get_identity(args.identity_id), 0
+
+
+def _census_verify(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    verification = runtime.census.verify(args.recollection_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _census_assess(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
+    assessment = runtime.census.assess(args.recollection_id)
+    return assessment, 0 if not assessment.defects else 3
 
 
 def _trust_add_rule(runtime: Runtime, args: argparse.Namespace) -> tuple[Any, int]:
@@ -608,6 +646,35 @@ def build_parser() -> argparse.ArgumentParser:
     recollection_verify = recollection_commands.add_parser("verify")
     recollection_verify.add_argument("--recollection-id", required=True)
     _set_handler(recollection_verify, _recollection_verify)
+
+    census = top.add_parser(
+        "census",
+        help="manage evidence-bound Task 5 C2 census identities and assessment",
+    )
+    census_commands = census.add_subparsers(dest="census_command", required=True)
+
+    census_register = census_commands.add_parser("register")
+    census_register.add_argument("--recollection-id", required=True)
+    census_register.add_argument("--identity-id", required=True)
+    census_register.add_argument("--identity-key", required=True)
+    census_register.add_argument("--source-id", required=True)
+    census_register.add_argument("--attempt-id", required=True)
+    census_register.add_argument("--observation-id", required=True)
+    census_register.add_argument("--actor", required=True)
+    _add_occurred_at(census_register)
+    _set_handler(census_register, _census_register)
+
+    census_get = census_commands.add_parser("get")
+    census_get.add_argument("--identity-id", required=True)
+    _set_handler(census_get, _census_get)
+
+    census_verify = census_commands.add_parser("verify")
+    census_verify.add_argument("--recollection-id", required=True)
+    _set_handler(census_verify, _census_verify)
+
+    census_assess = census_commands.add_parser("assess")
+    census_assess.add_argument("--recollection-id", required=True)
+    _set_handler(census_assess, _census_assess)
 
     trust = top.add_parser("trust", help="manage default-deny policy and decisions")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
