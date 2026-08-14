@@ -945,6 +945,8 @@ class ResearchCampaign:
                 defects.append(f"SUCCESS_SNAPSHOT_INVALID:{attempt_id}")
             for observation in observations:
                 observation_id = str(observation["observation_id"])
+                if outcome is not None and outcome is not ReceiptOutcome.SUCCESS:
+                    defects.append(f"NON_SUCCESS_OBSERVATION_PRESENT:{observation_id}")
                 observation_data: dict[str, Any] | None = None
                 try:
                     decoded_data = json.loads(str(observation["data_json"]))
