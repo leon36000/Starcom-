@@ -303,7 +303,7 @@ class C3AdoptionCliTests(unittest.TestCase):
         self.assertEqual(wrong_context_result.returncode, 2)
         self.assertEqual(
             self.decode_stderr(wrong_context_result)["error"],
-            "AUTHORIZATION_ERROR",
+            "AUTHORIZATION_DENIED",
         )
         self.assertEqual(self.table_count("c3_adoptions"), 0)
         self.assertEqual(self.table_count("continuity_authorization_consumptions"), 0)
@@ -314,7 +314,7 @@ class C3AdoptionCliTests(unittest.TestCase):
             actor="another-operator",
         )
         self.assertEqual(wrong_actor.returncode, 2)
-        self.assertEqual(self.decode_stderr(wrong_actor)["error"], "AUTHORIZATION_ERROR")
+        self.assertEqual(self.decode_stderr(wrong_actor)["error"], "AUTHORIZATION_DENIED")
         self.assertEqual(self.table_count("c3_adoptions"), 0)
 
         invalid_plan = {
