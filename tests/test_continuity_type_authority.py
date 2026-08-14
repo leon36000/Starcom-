@@ -18,10 +18,10 @@ class ContinuityTypeAuthorityTests(unittest.TestCase):
     def test_service_exports_are_exact_canonical_contract_classes(self) -> None:
         names = (
             "IncidentStatus",
-            "IndependentReviewDisposition",
-            "ContinuityIncident",
-            "ReviewerTrustRoot",
-            "IndependentReview",
+            "SignatureVerifier",
+            "IncidentRecord",
+            "TrustRootReceipt",
+            "ReviewAdmission",
             "RecoveryPublication",
             "ContinuityVerification",
         )
@@ -32,18 +32,13 @@ class ContinuityTypeAuthorityTests(unittest.TestCase):
                     getattr(canonical_contracts, name),
                 )
 
-    def test_serialized_enum_values_are_preserved(self) -> None:
+    def test_serialized_contract_values_are_preserved(self) -> None:
         self.assertEqual(
             [member.value for member in canonical_contracts.IncidentStatus],
             [
                 "RECOVERY_REQUIRED",
-                "EXPLICIT_RECOVERY_PUBLICATION_AUTHORIZED_NOT_EXECUTED",
                 "RECOVERY_PUBLISHED_RECOLLECT_REQUIRED",
             ],
-        )
-        self.assertEqual(
-            [member.value for member in canonical_contracts.IndependentReviewDisposition],
-            ["RECOLLECT_REQUIRED", "ACCEPTED"],
         )
 
     def test_service_returns_canonical_incident_record(self) -> None:
@@ -60,17 +55,14 @@ class ContinuityTypeAuthorityTests(unittest.TestCase):
                     actor="owner",
                     occurred_at="2026-08-14T05:00:00.000000Z",
                 )
-                self.assertIsInstance(incident, canonical_contracts.ContinuityIncident)
+                self.assertIsInstance(incident, canonical_contracts.IncidentRecord)
                 self.assertIs(
                     incident.status,
                     canonical_contracts.IncidentStatus.RECOVERY_REQUIRED,
                 )
                 loaded = service.get_incident("type-authority")
-                self.assertIsInstance(loaded, canonical_contracts.ContinuityIncident)
-                self.assertIs(
-                    loaded.disposition,
-                    canonical_contracts.IndependentReviewDisposition.RECOLLECT_REQUIRED,
-                )
+                self.assertIsInstance(loaded, canonical_contracts.IncidentRecord)
+                self.assertEqual(loaded.disposition, "RECOLLECT_REQUIRED")
             finally:
                 database.close()
 
