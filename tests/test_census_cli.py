@@ -76,6 +76,7 @@ class C2CensusCliTests(unittest.TestCase):
                 "--action",
                 action,
                 "--resource",
+                resource,
             )
         )
         return str(decision["result"]["decision_id"])  # type: ignore[index]
