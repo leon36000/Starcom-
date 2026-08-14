@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ import unittest
 from starcom.db import Database
 from starcom.ledger import EventLedger
 from starcom.trust import (
+    AuthorizationDecision,
     AuthorizationRequest,
     PolicyEffect,
     PolicyRule,
@@ -41,6 +43,41 @@ class TrustPlaneTests(unittest.TestCase):
         }
         values.update(overrides)
         return AuthorizationRequest(**values)  # type: ignore[arg-type]
+
+    def _decision_payload(self, decision: AuthorizationDecision) -> object:
+        row = self.db.connection.execute(
+            "SELECT payload_json FROM ledger_events WHERE event_id = ?",
+            (decision.ledger_event_id,),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        assert row is not None
+        return json.loads(str(row["payload_json"]))
+
+    def _repoint_decision(
+        self,
+        decision: AuthorizationDecision,
+        *,
+        stream_id: str,
+        kind: str,
+        actor: str,
+        occurred_at: str,
+    ) -> None:
+        forged = self.ledger.append(
+            stream_id,
+            kind,
+            self._decision_payload(decision),
+            actor=actor,
+            occurred_at=occurred_at,
+        )
+        self.db.connection.execute("DROP TRIGGER trust_decisions_no_update")
+        self.db.connection.execute(
+            """
+            UPDATE trust_decisions
+            SET ledger_event_id = ?, ledger_hash = ?
+            WHERE decision_id = ?
+            """,
+            (forged.event_id, forged.record_hash, decision.decision_id),
+        )
 
     def test_default_is_deny_and_decision_is_ledgered(self) -> None:
         decision = self.trust.authorize(self.request(), now=NOW)
@@ -216,6 +253,66 @@ class TrustPlaneTests(unittest.TestCase):
             "DECISION_MATCHED_RULE_IDS_JSON_INVALID",
             verification.defects,
         )
+
+    def test_verifier_rejects_wrong_decision_ledger_kind(self) -> None:
+        decision = self.trust.authorize(self.request(), now=NOW)
+        self._repoint_decision(
+            decision,
+            stream_id="trust:decisions:agent:researcher",
+            kind="AUTHORIZATION_REBOUND",
+            actor="trust-plane",
+            occurred_at=NOW,
+        )
+
+        verification = self.trust.verify_decision(decision.decision_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("DECISION_LEDGER_KIND_MISMATCH", verification.defects)
+
+    def test_verifier_rejects_cross_stream_decision_repointing(self) -> None:
+        decision = self.trust.authorize(self.request(), now=NOW)
+        self._repoint_decision(
+            decision,
+            stream_id="trust:decisions:shadow",
+            kind="AUTHORIZATION_DECIDED",
+            actor="trust-plane",
+            occurred_at=NOW,
+        )
+
+        verification = self.trust.verify_decision(decision.decision_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("DECISION_LEDGER_STREAM_MISMATCH", verification.defects)
+
+    def test_verifier_rejects_wrong_decision_ledger_actor(self) -> None:
+        decision = self.trust.authorize(self.request(), now=NOW)
+        self._repoint_decision(
+            decision,
+            stream_id="trust:decisions:agent:researcher",
+            kind="AUTHORIZATION_DECIDED",
+            actor="intruder",
+            occurred_at=NOW,
+        )
+
+        verification = self.trust.verify_decision(decision.decision_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("DECISION_LEDGER_ACTOR_MISMATCH", verification.defects)
+
+    def test_verifier_rejects_wrong_decision_ledger_timestamp(self) -> None:
+        decision = self.trust.authorize(self.request(), now=NOW)
+        self._repoint_decision(
+            decision,
+            stream_id="trust:decisions:agent:researcher",
+            kind="AUTHORIZATION_DECIDED",
+            actor="trust-plane",
+            occurred_at=LATER,
+        )
+
+        verification = self.trust.verify_decision(decision.decision_id)
+
+        self.assertFalse(verification.ok)
+        self.assertIn("DECISION_LEDGER_TIMESTAMP_MISMATCH", verification.defects)
 
 
 if __name__ == "__main__":
