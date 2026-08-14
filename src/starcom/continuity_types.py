@@ -40,6 +40,16 @@ class TrustRootReceipt:
 
 
 @dataclass(frozen=True)
+class TrustRootVerification:
+    key_id: str
+    defects: tuple[str, ...]
+
+    @property
+    def ok(self) -> bool:
+        return not self.defects
+
+
+@dataclass(frozen=True)
 class ReviewAdmission:
     review_id: str
     incident_id: str

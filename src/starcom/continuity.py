@@ -18,6 +18,7 @@ from .continuity_types import (
     ReviewAdmission,
     SignatureVerifier,
     TrustRootReceipt,
+    TrustRootVerification,
 )
 from .db import Database
 from .errors import (
@@ -557,6 +558,96 @@ class ContinuityService:
         assert row is not None
         return self._trust_root_from_row(row)
 
+    def verify_trust_root(self, key_id: str) -> TrustRootVerification:
+        key_id = self._required_text(key_id, "key_id")
+        root = self.database.connection.execute(
+            "SELECT * FROM continuity_trust_roots WHERE key_id = ?",
+            (key_id,),
+        ).fetchone()
+        if root is None:
+            return TrustRootVerification(
+                key_id=key_id,
+                defects=(f"TRUST_ROOT_NOT_FOUND:{key_id}",),
+            )
+
+        defects: list[str] = []
+        public_key = bytes(root["public_key_pem"])
+        if self._digest(public_key) != str(root["fingerprint_sha256"]):
+            defects.append(f"TRUST_ROOT_FINGERPRINT_MISMATCH:{key_id}")
+        if not self.signature_verifier.validate_public_key(public_key):
+            defects.append(f"TRUST_ROOT_PUBLIC_KEY_INVALID:{key_id}")
+
+        decision_id = str(root["decision_id"])
+        decision_verification = self.trust.verify_decision(decision_id)
+        if not decision_verification.ok:
+            defects.append(f"TRUST_ROOT_DECISION_INVALID:{key_id}")
+        else:
+            try:
+                decision = self.trust.get_decision(decision_id)
+            except NotFoundError:
+                defects.append(f"TRUST_ROOT_DECISION_INVALID:{key_id}")
+            else:
+                expected_request = (
+                    str(root["accepted_by"]),
+                    "continuity.trust-root.accept",
+                    f"continuity:trust-root:{key_id}",
+                )
+                observed_request = (
+                    decision.request.subject,
+                    decision.request.action,
+                    decision.request.resource,
+                )
+                if not decision.allowed or observed_request != expected_request:
+                    defects.append(f"TRUST_ROOT_DECISION_INVALID:{key_id}")
+
+        consumption = self.database.connection.execute(
+            "SELECT * FROM continuity_authorization_consumptions WHERE decision_id = ?",
+            (decision_id,),
+        ).fetchone()
+        if consumption is None or (
+            str(consumption["operation_kind"]) != "TRUST_ROOT_ACCEPTED"
+            or str(consumption["operation_id"]) != key_id
+            or str(consumption["consumed_by"]) != str(root["accepted_by"])
+            or str(consumption["consumed_at"]) != str(root["accepted_at"])
+        ):
+            defects.append(
+                f"TRUST_ROOT_AUTHORIZATION_CONSUMPTION_MISMATCH:{key_id}"
+            )
+
+        trust_root_payload = {
+            "key_id": key_id,
+            "fingerprint_sha256": str(root["fingerprint_sha256"]),
+            "decision_id": decision_id,
+        }
+        defects.extend(
+            self._event_defects(
+                event_id=str(root["ledger_event_id"]),
+                expected_hash=str(root["ledger_hash"]),
+                expected_kind="CONTINUITY_TRUST_ROOT_ACCEPTED",
+                expected_payload=trust_root_payload,
+                label=f"TRUST_ROOT:{key_id}",
+            )
+        )
+        trust_root_event = self.database.connection.execute(
+            "SELECT stream_id, actor, occurred_at FROM ledger_events WHERE event_id = ?",
+            (str(root["ledger_event_id"]),),
+        ).fetchone()
+        if trust_root_event is not None:
+            if str(trust_root_event["stream_id"]) != f"continuity:trust-root:{key_id}":
+                defects.append(f"TRUST_ROOT:{key_id}_LEDGER_STREAM_MISMATCH")
+            if str(trust_root_event["actor"]) != str(root["accepted_by"]):
+                defects.append(f"TRUST_ROOT:{key_id}_LEDGER_ACTOR_MISMATCH")
+            if str(trust_root_event["occurred_at"]) != str(root["accepted_at"]):
+                defects.append(f"TRUST_ROOT:{key_id}_LEDGER_TIMESTAMP_MISMATCH")
+
+        if not self.ledger.verify(f"continuity:trust-root:{key_id}").ok:
+            defects.append(f"TRUST_ROOT_LEDGER_CHAIN_INVALID:{key_id}")
+
+        return TrustRootVerification(
+            key_id=key_id,
+            defects=tuple(dict.fromkeys(defects)),
+        )
+
     def _parse_review(self, payload: bytes) -> dict[str, object]:
         payload = self._bounded_bytes(payload, "payload", _MAX_PAYLOAD_BYTES)
         try:
@@ -920,71 +1011,7 @@ class ContinuityService:
             else:
                 key_id = str(root["key_id"])
                 public_key = bytes(root["public_key_pem"])
-                if self._digest(public_key) != str(root["fingerprint_sha256"]):
-                    defects.append(f"TRUST_ROOT_FINGERPRINT_MISMATCH:{key_id}")
-
-                decision_id = str(root["decision_id"])
-                decision_verification = self.trust.verify_decision(decision_id)
-                if not decision_verification.ok:
-                    defects.append(f"TRUST_ROOT_DECISION_INVALID:{key_id}")
-                else:
-                    try:
-                        decision = self.trust.get_decision(decision_id)
-                    except NotFoundError:
-                        defects.append(f"TRUST_ROOT_DECISION_INVALID:{key_id}")
-                    else:
-                        expected_request = (
-                            str(root["accepted_by"]),
-                            "continuity.trust-root.accept",
-                            f"continuity:trust-root:{key_id}",
-                        )
-                        observed_request = (
-                            decision.request.subject,
-                            decision.request.action,
-                            decision.request.resource,
-                        )
-                        if not decision.allowed or observed_request != expected_request:
-                            defects.append(f"TRUST_ROOT_DECISION_INVALID:{key_id}")
-
-                consumption = self.database.connection.execute(
-                    "SELECT * FROM continuity_authorization_consumptions WHERE decision_id = ?",
-                    (decision_id,),
-                ).fetchone()
-                if consumption is None or (
-                    str(consumption["operation_kind"]) != "TRUST_ROOT_ACCEPTED"
-                    or str(consumption["operation_id"]) != key_id
-                    or str(consumption["consumed_by"]) != str(root["accepted_by"])
-                ):
-                    defects.append(
-                        f"TRUST_ROOT_AUTHORIZATION_CONSUMPTION_MISMATCH:{key_id}"
-                    )
-
-                trust_root_payload = {
-                    "key_id": key_id,
-                    "fingerprint_sha256": str(root["fingerprint_sha256"]),
-                    "decision_id": decision_id,
-                }
-                defects.extend(
-                    self._event_defects(
-                        event_id=str(root["ledger_event_id"]),
-                        expected_hash=str(root["ledger_hash"]),
-                        expected_kind="CONTINUITY_TRUST_ROOT_ACCEPTED",
-                        expected_payload=trust_root_payload,
-                        label=f"TRUST_ROOT:{key_id}",
-                    )
-                )
-                trust_root_event = self.database.connection.execute(
-                    "SELECT stream_id, actor, occurred_at FROM ledger_events WHERE event_id = ?",
-                    (str(root["ledger_event_id"]),),
-                ).fetchone()
-                if trust_root_event is not None:
-                    if str(trust_root_event["stream_id"]) != f"continuity:trust-root:{key_id}":
-                        defects.append(f"TRUST_ROOT:{key_id}_LEDGER_STREAM_MISMATCH")
-                    if str(trust_root_event["actor"]) != str(root["accepted_by"]):
-                        defects.append(f"TRUST_ROOT:{key_id}_LEDGER_ACTOR_MISMATCH")
-                    if str(trust_root_event["occurred_at"]) != str(root["accepted_at"]):
-                        defects.append(f"TRUST_ROOT:{key_id}_LEDGER_TIMESTAMP_MISMATCH")
-
+                defects.extend(self.verify_trust_root(key_id).defects)
                 if not self.signature_verifier.verify(public_key, payload, signature):
                     defects.append(f"REVIEW_SIGNATURE_INVALID:{review_id}")
             try:
@@ -1108,10 +1135,4 @@ class ContinuityService:
 
         if not self.ledger.verify(f"continuity:incident:{incident_id}").ok:
             defects.append("INCIDENT_LEDGER_CHAIN_INVALID")
-        for key_id in {
-            str(row["key_id"])
-            for row in review_rows
-        }:
-            if not self.ledger.verify(f"continuity:trust-root:{key_id}").ok:
-                defects.append(f"TRUST_ROOT_LEDGER_CHAIN_INVALID:{key_id}")
         return ContinuityVerification(incident_id, tuple(dict.fromkeys(defects)))
