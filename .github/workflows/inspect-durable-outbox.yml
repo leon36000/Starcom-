@@ -1,0 +1,54 @@
+name: Inspect STARCOM durable outbox contract
+
+on:
+  push:
+    branches:
+      - control/c3-execution-discovery-20260814
+    paths:
+      - '.github/workflows/inspect-durable-outbox.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Print durable API and source
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import dataclasses
+          import inspect
+          import starcom.durable as durable
+
+          print('=== module symbols ===')
+          for name in sorted(vars(durable)):
+              value = getattr(durable, name)
+              if name.startswith('_'):
+                  continue
+              if inspect.isclass(value) or inspect.isfunction(value):
+                  try:
+                      signature = inspect.signature(value)
+                  except (TypeError, ValueError):
+                      signature = '<no-signature>'
+                  print(f'{name}: {signature}')
+                  if inspect.isclass(value) and dataclasses.is_dataclass(value):
+                      print('  fields:', [(field.name, str(field.type)) for field in dataclasses.fields(value)])
+
+          print('=== DurableOutbox methods ===')
+          for name, value in inspect.getmembers(durable.DurableOutbox, inspect.isfunction):
+              if name.startswith('_'):
+                  continue
+              print(f'{name}{inspect.signature(value)}')
+
+          print('=== source ===')
+          print(inspect.getsource(durable))
+          PY
