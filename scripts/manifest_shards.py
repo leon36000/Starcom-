@@ -7,7 +7,7 @@ from scripts.build_manifest import ManifestVerification, build_manifest
 
 
 _HEX = frozenset("0123456789abcdef")
-_ALLOWED_SEGMENT_SHAPES = {(4, 16), (8, 8)}
+_ALLOWED_SEGMENT_SHAPES = {(4, 16), (8, 8), (16, 4)}
 
 
 def discover_manifest_shards(root: str | Path) -> tuple[Path, ...]:
