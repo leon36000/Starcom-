@@ -290,6 +290,7 @@ class C3AdoptionCliTests(unittest.TestCase):
         self.establish_signed_selected_decision()
         preparation = self.success(self.prepare())["result"]  # type: ignore[index]
         self.add_exact_allow_rule(preparation)
+        consumption_before = self.table_count("continuity_authorization_consumptions")
         wrong_context = dict(preparation["context"])  # type: ignore[arg-type]
         wrong_context["rollback_plan_sha256"] = "0" * 64
         authorization = self.success(
@@ -306,7 +307,10 @@ class C3AdoptionCliTests(unittest.TestCase):
             "AUTHORIZATION_DENIED",
         )
         self.assertEqual(self.table_count("c3_adoptions"), 0)
-        self.assertEqual(self.table_count("continuity_authorization_consumptions"), 0)
+        self.assertEqual(
+            self.table_count("continuity_authorization_consumptions"),
+            consumption_before,
+        )
 
         exact_authorization = self.success(self.authorize_request(preparation))["result"]  # type: ignore[index]
         wrong_actor = self.authorize_adoption(
@@ -316,6 +320,10 @@ class C3AdoptionCliTests(unittest.TestCase):
         self.assertEqual(wrong_actor.returncode, 2)
         self.assertEqual(self.decode_stderr(wrong_actor)["error"], "AUTHORIZATION_DENIED")
         self.assertEqual(self.table_count("c3_adoptions"), 0)
+        self.assertEqual(
+            self.table_count("continuity_authorization_consumptions"),
+            consumption_before,
+        )
 
         invalid_plan = {
             "strategy": "rollback",
@@ -338,6 +346,10 @@ class C3AdoptionCliTests(unittest.TestCase):
             "VALIDATION_ERROR",
         )
         self.assertEqual(self.table_count("c3_adoptions"), 0)
+        self.assertEqual(
+            self.table_count("continuity_authorization_consumptions"),
+            consumption_before,
+        )
 
     def test_no_execution_subcommand_is_exposed(self) -> None:
         for command in ("execute", "install", "enable", "deploy", "run"):
