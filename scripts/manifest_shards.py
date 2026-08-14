@@ -7,6 +7,7 @@ from scripts.build_manifest import ManifestVerification, build_manifest
 
 
 _HEX = frozenset("0123456789abcdef")
+_ALLOWED_SEGMENT_SHAPES = {(4, 16), (8, 8)}
 
 
 def discover_manifest_shards(root: str | Path) -> tuple[Path, ...]:
@@ -16,13 +17,17 @@ def discover_manifest_shards(root: str | Path) -> tuple[Path, ...]:
 
 def _parse_segmented_digest(rendered: str, line_number: int) -> str:
     segments = rendered.split(":")
-    if len(segments) != 4:
+    shape = (len(segments), len(segments[0]) if segments else 0)
+    if shape not in _ALLOWED_SEGMENT_SHAPES:
         raise ValueError(f"invalid segmented digest on line {line_number}")
-    if any(len(segment) != 16 for segment in segments):
+    if any(len(segment) != shape[1] for segment in segments):
         raise ValueError(f"invalid segmented digest on line {line_number}")
     if any(set(segment) - _HEX for segment in segments):
         raise ValueError(f"invalid segmented digest on line {line_number}")
-    return "".join(segments)
+    digest = "".join(segments)
+    if len(digest) != 64:
+        raise ValueError(f"invalid segmented digest on line {line_number}")
+    return digest
 
 
 def load_manifest_shards(paths: Iterable[str | Path]) -> dict[str, str]:
