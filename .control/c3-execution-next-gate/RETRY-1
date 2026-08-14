@@ -1,0 +1,3 @@
+retry=1
+required_tests=230
+next_branch=agent/c3-adoption-execution-cli
