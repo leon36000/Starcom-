@@ -27,14 +27,16 @@ jobs:
           ref: control/c3-executor-registry-v4-authority-hardening-20260814
           fetch-depth: 0
 
-      - name: Preserve bounded hardening patch
+      - name: Preserve bounded hardening patches
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/starcom-c3-registry-hardening
           cp .control/c3-executor-registry-v4-authority-hardening/apply_patch.py \
             /tmp/starcom-c3-registry-hardening/
-          sha256sum /tmp/starcom-c3-registry-hardening/apply_patch.py
+          cp .control/c3-executor-registry-v4-authority-hardening/patch_test_fixture.py \
+            /tmp/starcom-c3-registry-hardening/
+          sha256sum /tmp/starcom-c3-registry-hardening/*
 
       - name: Establish exact independent-review RED baseline
         shell: bash
@@ -94,11 +96,12 @@ jobs:
             grep -Fq "$test_name" /tmp/starcom-c3-registry-hardening/red.log
           done
 
-      - name: Apply bounded authority hardening and refresh manifest
+      - name: Apply bounded authority hardening and isolate fixtures
         shell: bash
         run: |
           set -euo pipefail
           python3 /tmp/starcom-c3-registry-hardening/apply_patch.py
+          python3 /tmp/starcom-c3-registry-hardening/patch_test_fixture.py
           grep -Fq 'def _qualifier_root_defects' src/starcom/executor_registry.py
           grep -Fq 'C3_EXECUTOR_DESCRIPTOR_PROVENANCE_MISMATCH' \
             src/starcom/executor_registry.py
