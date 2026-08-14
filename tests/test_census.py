@@ -1,39 +1,40 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from starcom.census import C2CensusService
+from starcom.continuity import ContinuityService, IncidentStatus
 from starcom.db import Database
 from starcom.errors import ConflictError, IntegrityError, StateTransitionError
 from starcom.ledger import EventLedger
-from starcom.recollection import C2RecollectionRecord, C2RecollectionVerification
+from starcom.recollection import C2RecollectionService
 from starcom.research import ReceiptOutcome, ResearchCampaign
+from starcom.trust import AuthorizationRequest, PolicyEffect, PolicyRule, TrustPlane
 
 
-T0 = "2026-08-14T05:00:00.000000Z"
+C0 = "2026-08-14T04:50:00.000000Z"
+C1 = "2026-08-14T04:51:00.000000Z"
+C2 = "2026-08-14T04:52:00.000000Z"
+C3 = "2026-08-14T04:53:00.000000Z"
+C4 = "2026-08-14T04:54:00.000000Z"
 T1 = "2026-08-14T05:01:00.000000Z"
 T2 = "2026-08-14T05:02:00.000000Z"
 T3 = "2026-08-14T05:03:00.000000Z"
+ARCHIVE_SHA256 = "5609915904205503ebcdcc548d9b8171fd6d9ba9bf9d1bb9f1ebb036bf8fae7f"
+PUBLIC_KEY = b"census-test-public-key"
 SNAPSHOT = hashlib.sha256(b"snapshot").hexdigest()
 
 
-class FakeRecollectionService:
-    def __init__(self, record: C2RecollectionRecord) -> None:
-        self.record = record
-        self.defects: tuple[str, ...] = ()
+class DigestVerifier:
+    def validate_public_key(self, public_key_pem: bytes) -> bool:
+        return public_key_pem == PUBLIC_KEY
 
-    def get(self, recollection_id: str) -> C2RecollectionRecord:
-        if recollection_id != self.record.recollection_id:
-            raise AssertionError("unexpected recollection id")
-        return self.record
-
-    def verify(self, recollection_id: str) -> C2RecollectionVerification:
-        self.get(recollection_id)
-        return C2RecollectionVerification(recollection_id, self.defects)
+    def verify(self, public_key_pem: bytes, payload: bytes, signature: bytes) -> bool:
+        return signature == hashlib.sha256(public_key_pem + payload).digest()
 
 
 class C2CensusIdentityTests(unittest.TestCase):
@@ -42,28 +43,45 @@ class C2CensusIdentityTests(unittest.TestCase):
         self.db = Database(Path(self.tempdir.name) / "census.sqlite3")
         self.db.initialize()
         self.ledger = EventLedger(self.db)
+        self.trust = TrustPlane(self.db, self.ledger)
+        self.continuity = ContinuityService(
+            self.db,
+            self.ledger,
+            self.trust,
+            DigestVerifier(),
+        )
         self.research = ResearchCampaign(self.db, self.ledger)
+        self.recollection = C2RecollectionService(
+            self.db,
+            self.ledger,
+            self.continuity,
+            self.research,
+        )
+        self.continuity.create_incident(
+            "task5",
+            reviewed_archive_sha256=ARCHIVE_SHA256,
+            actor="owner",
+            occurred_at=C0,
+        )
         self.research.create(
             campaign_id="c2-campaign",
             name="C2 live census fixture",
             actor="owner",
-            occurred_at=T0,
+            occurred_at=C0,
         )
-        self.recollection_record = C2RecollectionRecord(
-            recollection_id="c2-run",
+        self.publish_c1_recovery()
+        self.recollection.start(
+            "c2-run",
             incident_id="task5",
             campaign_id="c2-campaign",
             minimum_identity_target=800,
-            started_at=T0,
-            started_by="owner",
-            ledger_event_id="fixture-c2-event",
-            ledger_hash="f" * 64,
+            actor="owner",
+            occurred_at=C4,
         )
-        self.recollection = FakeRecollectionService(self.recollection_record)
         self.census = C2CensusService(
             self.db,
             self.ledger,
-            self.recollection,  # type: ignore[arg-type]
+            self.recollection,
             self.research,
         )
         self._prepared_attempt = False
@@ -71,6 +89,90 @@ class C2CensusIdentityTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.db.close()
         self.tempdir.cleanup()
+
+    @staticmethod
+    def review_payload() -> bytes:
+        value = {
+            "review_id": "review-census",
+            "reviewer_identity": "independent-census-fixture",
+            "review_environment": "isolated-census-fixture",
+            "reviewed_archive_sha256": ARCHIVE_SHA256,
+            "reviewed_at_utc": C1,
+            "independence_basis": "fresh deterministic fixture",
+            "independent_identity_status": "SATISFIED",
+            "commands_and_exit_codes": [{"command": "verify", "exit_code": 0}],
+            "receipt_snapshot_observation_result": "PASS",
+            "wave_order_result": "CONFIRMS_W3_TO_W2",
+            "attempt_boundary_result": "POSSIBLE_UNQUANTIFIED_CONFIRMED",
+            "disposition": "RECOLLECT_REQUIRED",
+            "evidence_paths_and_hashes": [
+                {"path": "review.json", "sha256": "a" * 64}
+            ],
+            "reasoning": "The fixture confirms recollection is required.",
+            "gate_effect": "NO_GATE_CHANGE",
+        }
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def sign(payload: bytes) -> bytes:
+        return hashlib.sha256(PUBLIC_KEY + payload).digest()
+
+    def allow(self, action: str, resource: str, rule_id: str, now: str) -> str:
+        self.trust.add_rule(
+            PolicyRule(rule_id, PolicyEffect.ALLOW, "owner", action, resource),
+            actor="owner",
+            occurred_at=C0,
+        )
+        decision = self.trust.authorize(
+            AuthorizationRequest(subject="owner", action=action, resource=resource),
+            now=now,
+        )
+        self.assertTrue(decision.allowed)
+        return decision.decision_id
+
+    def publish_c1_recovery(self) -> None:
+        root_decision = self.allow(
+            "continuity.trust-root.accept",
+            "continuity:trust-root:reviewer-census",
+            "allow-census-root",
+            C1,
+        )
+        self.continuity.accept_trust_root(
+            "reviewer-census",
+            PUBLIC_KEY,
+            decision_id=root_decision,
+            actor="owner",
+            occurred_at=C1,
+        )
+        payload = self.review_payload()
+        review = self.continuity.admit_review(
+            "task5",
+            "reviewer-census",
+            payload,
+            self.sign(payload),
+            actor="owner",
+            occurred_at=C2,
+        )
+        recovery_decision = self.allow(
+            "continuity.recovery.publish",
+            "continuity:incident:task5",
+            "allow-census-recovery",
+            C3,
+        )
+        publication = self.continuity.publish_recovery(
+            "task5",
+            review.review_id,
+            publication_id="publication-census",
+            idempotency_key="publish-census-recovery",
+            decision_id=recovery_decision,
+            actor="owner",
+            occurred_at=C3,
+        )
+        self.assertEqual(
+            publication.status,
+            IncidentStatus.RECOVERY_PUBLISHED_RECOLLECT_REQUIRED,
+        )
+        self.assertTrue(self.continuity.verify_incident("task5").ok)
 
     def prepare_success_attempt(self, *, source_id: str = "github") -> str:
         if self._prepared_attempt:
@@ -108,7 +210,12 @@ class C2CensusIdentityTests(unittest.TestCase):
         self._prepared_attempt = True
         return "attempt-1"
 
-    def add_observation(self, index: int, *, attempt_id: str = "attempt-1") -> tuple[str, str]:
+    def add_observation(
+        self,
+        index: int,
+        *,
+        attempt_id: str = "attempt-1",
+    ) -> tuple[str, str]:
         observation_id = f"observation-{index:04d}"
         digest = hashlib.sha256(f"identity-{index:04d}".encode()).hexdigest()
         self.research.record_observation(
@@ -122,7 +229,13 @@ class C2CensusIdentityTests(unittest.TestCase):
         )
         return observation_id, digest
 
-    def register(self, index: int, *, identity_key: str | None = None, source_id: str = "github"):
+    def register(
+        self,
+        index: int,
+        *,
+        identity_key: str | None = None,
+        source_id: str = "github",
+    ):
         return self.census.register_identity(
             "c2-run",
             identity_id=f"identity-record-{index:04d}",
@@ -182,11 +295,21 @@ class C2CensusIdentityTests(unittest.TestCase):
         self.prepare_success_attempt(source_id="github")
         self.add_observation(1)
 
-        with self.assertRaisesRegex(StateTransitionError, "identity source does not match attempt"):
+        with self.assertRaisesRegex(
+            StateTransitionError,
+            "identity source does not match attempt",
+        ):
             self.register(1, source_id="gitlab")
 
-        self.recollection.defects = ("C2_LEDGER_CHAIN:HASH_MISMATCH",)
-        with self.assertRaisesRegex(IntegrityError, "C2 recollection verification failed"):
+        self.db.connection.execute("DROP TRIGGER c2_recollections_no_update")
+        self.db.connection.execute(
+            "UPDATE c2_recollections SET ledger_hash = ? WHERE recollection_id = ?",
+            ("0" * 64, "c2-run"),
+        )
+        with self.assertRaisesRegex(
+            IntegrityError,
+            "C2 recollection verification failed",
+        ):
             self.register(1)
 
     def test_verifier_detects_repointed_identity_event(self) -> None:
@@ -211,14 +334,21 @@ class C2CensusIdentityTests(unittest.TestCase):
         )
         self.db.connection.execute("DROP TRIGGER c2_census_identities_no_update")
         self.db.connection.execute(
-            "UPDATE c2_census_identities SET ledger_event_id = ?, ledger_hash = ? WHERE identity_id = ?",
+            """
+            UPDATE c2_census_identities
+            SET ledger_event_id = ?, ledger_hash = ?
+            WHERE identity_id = ?
+            """,
             (forged.event_id, forged.record_hash, record.identity_id),
         )
 
         verification = self.census.verify("c2-run")
 
         self.assertFalse(verification.ok)
-        self.assertIn(f"C2_IDENTITY_LEDGER_STREAM_MISMATCH:{record.identity_id}", verification.defects)
+        self.assertIn(
+            f"C2_IDENTITY_LEDGER_STREAM_MISMATCH:{record.identity_id}",
+            verification.defects,
+        )
 
     def test_800_unique_evidence_bound_identities_become_pre_certification_eligible(self) -> None:
         self.prepare_success_attempt()
