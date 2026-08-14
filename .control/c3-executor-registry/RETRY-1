@@ -1,0 +1,3 @@
+retry=1
+required_tests=250
+feature=fix/c3-executor-registry-v2
