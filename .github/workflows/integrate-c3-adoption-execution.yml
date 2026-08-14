@@ -1,0 +1,85 @@
+name: Integrate verified STARCOM C3 adoption execution
+
+on:
+  push:
+    branches:
+      - control/c3-adoption-execution-integrate-20260814
+    paths:
+      - '.github/workflows/integrate-c3-adoption-execution.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-main-integration
+  cancel-in-progress: false
+
+jobs:
+  merge-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout integration control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-adoption-execution-integrate-20260814
+          fetch-depth: 0
+
+      - name: Freeze exact remote base and product heads
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main fix/c3-adoption-execution
+          base="$(git rev-parse origin/main)"
+          head="$(git rev-parse origin/fix/c3-adoption-execution)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base"
+          echo "head=$head"
+          test "$base" = "f20b1ba6d4e78c990c6ee6df2b19a157127b3c44"
+          test "$(git merge-base "$base" "$head")" = "$base"
+
+      - name: Create exact merge candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git switch -C integration/c3-adoption-execution '${{ steps.refs.outputs.base }}'
+          git merge --no-ff --no-edit '${{ steps.refs.outputs.head }}'
+          test "$(git rev-parse HEAD^1)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse HEAD^2)" = '${{ steps.refs.outputs.head }}'
+
+      - name: Verify merge candidate completely
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 224:
+              raise SystemExit(f'expected 224 tests, found {total}')
+          PY
+          python3 -m unittest discover -s tests -p 'test_durable_transaction.py' -v
+          python3 -m unittest discover -s tests -p 'test_adoption_execution.py' -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_adoption_execution.py'
+          git diff HEAD^1..HEAD --check
+
+      - name: Recheck immutable refs and publish merge to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main fix/c3-adoption-execution
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse origin/fix/c3-adoption-execution)" = '${{ steps.refs.outputs.head }}'
+          git push origin 'HEAD:refs/heads/main'
+          git rev-parse HEAD
