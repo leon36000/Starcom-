@@ -1,7 +1,7 @@
 # Exact-byte signed C3 decision authority
 
-**Date:** 2026-08-14  
-**Issue:** #38  
+**Date:** 2026-08-14
+**Issue:** #38
 **Status:** implementation-ready
 
 ## Purpose
