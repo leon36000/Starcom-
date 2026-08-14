@@ -27,12 +27,13 @@ jobs:
           ref: control/c3-adoption-cli-20260814
           fetch-depth: 0
 
-      - name: Preserve bounded patch outside worktree
+      - name: Preserve and normalize bounded patch outside worktree
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/starcom-c3-adoption-cli
           cp .control/c3-adoption-cli/apply_patch.py /tmp/starcom-c3-adoption-cli/
+          python3 .control/c3-adoption-cli/normalize_patch.py
           sha256sum /tmp/starcom-c3-adoption-cli/apply_patch.py
 
       - name: Establish exact RED baseline
