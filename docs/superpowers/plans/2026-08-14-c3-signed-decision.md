@@ -50,7 +50,7 @@
 
 - [ ] **Step 1: Create a minimal RED service seam**
 
-Create `src/starcom/qualification_decision.py` with the public enum/dataclasses and methods above. `snapshot()`, `admit_decision()`, and `get_decision()` must raise a domain error stating the authority is not implemented; `verify_decision()` must return a single `C3_DECISION_AUTHORITY_NOT_IMPLEMENTED` defect.
+Create `src/starcom/qualification_decision.py` with the public enum/dataclasses and methods above. `snapshot()`, `admit_decision()`, and `get_decision()` must raise `StateTransitionError("C3 decision authority is not implemented")`; `verify_decision()` must return a single `C3_DECISION_AUTHORITY_NOT_IMPLEMENTED` defect.
 
 - [ ] **Step 2: Add deterministic fixtures**
 
@@ -104,7 +104,7 @@ Expected:
 - only the new decision contract is red;
 - existing tests remain green;
 - compile, secret scan, and text policy remain green;
-- manifest reports only the intentionally unlisted new RED files.
+- manifest reports only the intentionally unlisted new RED files and the two new reviewed design documents.
 
 - [ ] **Step 6: Commit RED evidence**
 
@@ -131,7 +131,28 @@ git commit -m "test: define exact-byte signed C3 decision contract"
 Add:
 
 ```python
-_REQUIRED_PAYLOAD_FIELDS = frozenset({...18 exact names...})
+_REQUIRED_PAYLOAD_FIELDS = frozenset(
+    {
+        "decision_id",
+        "c3_run_id",
+        "qualification_run_id",
+        "certificate_id",
+        "qualification_head_hash",
+        "candidate_count",
+        "evaluation_count",
+        "candidate_set_digest",
+        "evaluation_set_digest",
+        "verdict",
+        "selected_candidate_artifact_id",
+        "decision_maker_identity",
+        "decision_maker_environment",
+        "decided_at_utc",
+        "independence_basis",
+        "independent_identity_status",
+        "qualification_verification_result",
+        "gate_effect",
+    }
+)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 _MAX_SIGNATURE_BYTES = 1024
@@ -141,18 +162,18 @@ Implement required non-empty text, RFC 3339 timezone-aware timestamp, bounded by
 
 - [ ] **Step 2: Implement the snapshot member contract**
 
-For each `CANDIDATE` or `EVALUATION` artifact, freeze:
+For each `CANDIDATE` or `EVALUATION` artifact, freeze exactly:
 
 ```python
-{
-    "artifact_id": ...,
-    "kind": ...,
-    "material": ...,
-    "material_sha256": ...,
-    "recorded_at": ...,
-    "recorded_by": ...,
-    "ledger_event_id": ...,
-    "ledger_hash": ...,
+member = {
+    "artifact_id": str(row["artifact_id"]),
+    "kind": str(row["kind"]),
+    "material": decoded_material,
+    "material_sha256": str(row["material_sha256"]),
+    "recorded_at": str(row["recorded_at"]),
+    "recorded_by": str(row["recorded_by"]),
+    "ledger_event_id": str(row["ledger_event_id"]),
+    "ledger_hash": str(row["ledger_hash"]),
 }
 ```
 
