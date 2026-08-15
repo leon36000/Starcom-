@@ -1,0 +1,113 @@
+name: Finalize verified STARCOM C4 architecture foundation
+
+on:
+  push:
+    branches:
+      - control/c4-architecture-foundation-finalize-20260814
+    paths:
+      - '.github/workflows/finalize-c4-architecture-foundation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c4-architecture-foundation-finalization
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c4-architecture-foundation-finalize-20260814
+          fetch-depth: 0
+
+      - name: Freeze exact main, RED and GREEN refs
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin main agent/c4-architecture-foundation fix/c4-architecture-foundation
+          base="$(git rev-parse origin/main)"
+          red="$(git rev-parse origin/agent/c4-architecture-foundation)"
+          green="$(git rev-parse origin/fix/c4-architecture-foundation)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "red=$red" >> "$GITHUB_OUTPUT"
+          echo "green=$green" >> "$GITHUB_OUTPUT"
+          echo "base=$base"
+          echo "red=$red"
+          echo "green=$green"
+          test "$base" = "a1cf4b071141c053c66170c67fed53d12030f249"
+          test "$red" = "97439a43b869369446d4034b08a8589e7750d62c"
+          test "$green" = "4b375fa8c88f5bef93f59ac6bc5ff3a70894fb60"
+          test "$(git merge-base "$base" "$red")" = "$base"
+          test "$(git merge-base "$red" "$green")" = "$red"
+          git switch -C fix/c4-architecture-foundation "$green"
+
+      - name: Re-prove focused GREEN before manifest refresh
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_architecture_input.py' -v
+          python3 -m unittest discover -s tests -p 'test_architecture_candidate.py' -v
+          python3 -m unittest discover -s tests -p 'test_architecture_candidate_messages.py' -v
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'input': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_input.py'
+              ).countTestCases(),
+              'candidate': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_candidate.py'
+              ).countTestCases(),
+              'messages': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_candidate_messages.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          print(counts)
+          expected = {'input': 8, 'candidate': 8, 'messages': 5, 'total': 300}
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+
+      - name: Refresh deterministic manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_manifest.py --root . --manifest MANIFEST.sha256 --write
+
+      - name: Verify complete repository and deterministic stress
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover -s tests -p 'test_architecture_*.py'
+          git add MANIFEST.sha256
+          git diff --cached --check
+          git diff --check
+
+      - name: Recheck immutable refs and publish final product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main agent/c4-architecture-foundation fix/c4-architecture-foundation
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse origin/agent/c4-architecture-foundation)" = '${{ steps.refs.outputs.red }}'
+          test "$(git rev-parse origin/fix/c4-architecture-foundation)" = '${{ steps.refs.outputs.green }}'
+          git commit -m 'build: refresh manifest for C4 architecture foundation'
+          git push origin 'HEAD:refs/heads/fix/c4-architecture-foundation'
+          git rev-parse HEAD
