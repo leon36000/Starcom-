@@ -1,0 +1,154 @@
+name: Publish verified STARCOM C3 executor registry CLI v2
+
+on:
+  push:
+    branches:
+      - control/c3-executor-registry-cli-v2-20260814
+    paths:
+      - '.control/c3-executor-registry-cli-v2/**'
+      - '.github/workflows/publish-c3-executor-registry-cli-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c3-executor-registry-cli-v2-publication
+  cancel-in-progress: false
+
+jobs:
+  red-green-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout isolated control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c3-executor-registry-cli-v2-20260814
+          fetch-depth: 0
+
+      - name: Preserve bounded patch outside worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/starcom-c3-registry-cli-v2
+          cp .control/c3-executor-registry-cli-v2/apply_patch.py \
+            /tmp/starcom-c3-registry-cli-v2/
+          sha256sum /tmp/starcom-c3-registry-cli-v2/apply_patch.py
+
+      - name: Freeze exact main and RED branch
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin main agent/c3-executor-registry-cli-v2
+          base="$(git rev-parse origin/main)"
+          head="$(git rev-parse origin/agent/c3-executor-registry-cli-v2)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base"
+          echo "head=$head"
+          test "$base" = "7fa1bf1f44b7d9df738a9fd6681bcfde13f818d3"
+          test "$(git merge-base "$base" "$head")" = "$base"
+          git switch -C fix/c3-executor-registry-cli-v2 "$head"
+          printf '%s\n' \
+            docs/superpowers/plans/2026-08-14-c3-executor-registry-cli.md \
+            docs/superpowers/specs/2026-08-14-c3-executor-registry-cli-design.md \
+            tests/test_executor_registry_cli.py \
+            > /tmp/starcom-c3-registry-cli-v2/expected-files.txt
+          git diff --name-only "$base"...HEAD | sort \
+            > /tmp/starcom-c3-registry-cli-v2/observed-files.txt
+          sort -o /tmp/starcom-c3-registry-cli-v2/expected-files.txt \
+            /tmp/starcom-c3-registry-cli-v2/expected-files.txt
+          diff -u \
+            /tmp/starcom-c3-registry-cli-v2/expected-files.txt \
+            /tmp/starcom-c3-registry-cli-v2/observed-files.txt
+          test -f src/starcom/executor_registry.py
+          test -f tests/test_executor_worker_attestation.py
+          test -f tests/test_executor_registry_cli.py
+          ! grep -Fq '"executor-registry"' src/starcom/cli.py
+
+      - name: Re-prove exact registry CLI RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          focused = unittest.defaultTestLoader.discover(
+              'tests', pattern='test_executor_registry_cli.py'
+          ).countTestCases()
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'focused_count={focused}')
+          print(f'test_count={total}')
+          if focused != 8:
+              raise SystemExit(f'expected 8 registry CLI tests, found {focused}')
+          if total != 279:
+              raise SystemExit(f'expected 279 tests, found {total}')
+          PY
+          set +e
+          python3 -m unittest discover -s tests \
+            -p 'test_executor_registry_cli.py' -v \
+            > /tmp/starcom-c3-registry-cli-v2/red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/starcom-c3-registry-cli-v2/red.log
+          test "$status" -ne 0
+          grep -Fq 'Ran 8 tests' /tmp/starcom-c3-registry-cli-v2/red.log
+          grep -Fq 'FAILED (failures=7)' /tmp/starcom-c3-registry-cli-v2/red.log
+          test "$(grep -c '^FAIL:' /tmp/starcom-c3-registry-cli-v2/red.log || true)" -eq 7
+          test "$(grep -c '^ERROR:' /tmp/starcom-c3-registry-cli-v2/red.log || true)" -eq 0
+          grep -Fq "invalid choice: 'executor-registry'" \
+            /tmp/starcom-c3-registry-cli-v2/red.log
+          grep -Fq \
+            'test_no_worker_or_execution_subcommand_is_exposed (test_executor_registry_cli.C3ExecutorRegistryCliTests.test_no_worker_or_execution_subcommand_is_exposed) ... ok' \
+            /tmp/starcom-c3-registry-cli-v2/red.log
+
+      - name: Apply thin exact-byte CLI patch and refresh manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/starcom-c3-registry-cli-v2/apply_patch.py
+          test "$(grep -c '^def _executor_registry_' src/starcom/cli.py)" -eq 13
+          grep -Fq 'executor_registry: C3ExecutorRegistry' src/starcom/cli.py
+          ! grep -Fq 'C3AdoptionExecutionWorker' src/starcom/cli.py
+          python3 scripts/build_manifest.py --root . \
+            --manifest MANIFEST.sha256 --write
+
+      - name: Verify focused GREEN and complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests \
+            -p 'test_executor_registry_cli.py' -v
+          python3 - <<'PY'
+          import unittest
+          total = unittest.defaultTestLoader.discover('tests').countTestCases()
+          print(f'test_count={total}')
+          if total != 279:
+              raise SystemExit(f'expected 279 tests, found {total}')
+          PY
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover \
+            -s tests -p 'test_executor_registry_cli.py'
+          git add -A
+          git diff --cached --check
+
+      - name: Recheck immutable refs and publish feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main agent/c3-executor-registry-cli-v2
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          test "$(git rev-parse origin/agent/c3-executor-registry-cli-v2)" = '${{ steps.refs.outputs.head }}'
+          git commit -m 'feat: expose exact-byte C3 executor registry CLI'
+          git push origin 'HEAD:refs/heads/fix/c3-executor-registry-cli-v2'
+          git rev-parse HEAD
