@@ -1,0 +1,78 @@
+name: Diagnose strengthened STARCOM C4 architecture foundation RED
+
+on:
+  push:
+    branches:
+      - control/c4-architecture-foundation-red-20260814
+    paths:
+      - '.github/workflows/diagnose-c4-architecture-foundation-red-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact strengthened RED branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: agent/c4-architecture-foundation
+          fetch-depth: 0
+
+      - name: Freeze exact RED SHA and counts
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "97439a43b869369446d4034b08a8589e7750d62c"
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'input': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_input.py'
+              ).countTestCases(),
+              'candidate': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_candidate.py'
+              ).countTestCases(),
+              'messages': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_candidate_messages.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          print(counts)
+          expected = {'input': 8, 'candidate': 8, 'messages': 5, 'total': 300}
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+
+      - name: Run focused RED and assert causal seams
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          for suite in \
+            architecture_input \
+            architecture_candidate \
+            architecture_candidate_messages; do
+            set +e
+            python3 -m unittest discover -s tests -p "test_${suite}.py" -v \
+              > "/tmp/red-${suite}.log" 2>&1
+            status=$?
+            set -e
+            cat "/tmp/red-${suite}.log"
+            test "$status" -ne 0
+            grep -Fq 'C4 architecture foundation is not implemented' "/tmp/red-${suite}.log"
+            ! grep -Fq 'ImportError' "/tmp/red-${suite}.log"
+            ! grep -Fq 'ModuleNotFoundError' "/tmp/red-${suite}.log"
+            ! grep -Fq 'SyntaxError' "/tmp/red-${suite}.log"
+          done
+          grep -Fq 'Ran 8 tests' /tmp/red-architecture_input.log
+          grep -Fq 'Ran 8 tests' /tmp/red-architecture_candidate.log
+          grep -Fq 'Ran 5 tests' /tmp/red-architecture_candidate_messages.log
+          grep -Fq 'FAILED (failures=5)' \
+            /tmp/red-architecture_candidate_messages.log
