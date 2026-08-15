@@ -1,0 +1,61 @@
+name: Diagnose focused STARCOM C4 architecture foundation GREEN
+
+on:
+  push:
+    branches:
+      - control/c4-architecture-foundation-green-20260814
+    paths:
+      - '.github/workflows/diagnose-c4-architecture-foundation-green.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-green:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact GREEN candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/c4-architecture-foundation
+          fetch-depth: 0
+
+      - name: Freeze exact candidate and counts
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "4b375fa8c88f5bef93f59ac6bc5ff3a70894fb60"
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'input': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_input.py'
+              ).countTestCases(),
+              'candidate': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_candidate.py'
+              ).countTestCases(),
+              'messages': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_candidate_messages.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          print(counts)
+          expected = {'input': 8, 'candidate': 8, 'messages': 5, 'total': 300}
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+
+      - name: Run all focused C4 suites
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_architecture_input.py' -v
+          python3 -m unittest discover -s tests -p 'test_architecture_candidate.py' -v
+          python3 -m unittest discover -s tests -p 'test_architecture_candidate_messages.py' -v
+          python3 -m compileall -q src/starcom/architecture_input.py src/starcom/architecture_candidate.py tests/test_architecture_*.py
