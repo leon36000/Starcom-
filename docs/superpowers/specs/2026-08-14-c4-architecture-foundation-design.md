@@ -1,7 +1,7 @@
 # Immutable C4 architecture foundation
 
-**Date:** 2026-08-14  
-**Issue:** #59  
+**Date:** 2026-08-14
+**Issue:** #59
 **Status:** implementation-ready
 
 ## Purpose
