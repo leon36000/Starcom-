@@ -20,7 +20,12 @@ from starcom.adoption_execution import (
 )
 from starcom.cli import Runtime
 from starcom.durable import DurableOutbox, EffectStatus
-from starcom.errors import AuthorizationError, ConflictError, IntegrityError
+from starcom.errors import (
+    AuthorizationError,
+    ConflictError,
+    IntegrityError,
+    StateTransitionError,
+)
 from starcom.trust import AuthorizationRequest, PolicyEffect, PolicyRule
 
 
@@ -32,6 +37,8 @@ E4 = "2026-08-14T13:20:00.000000Z"
 PRE_STATE = "1" * 64
 POST_STATE = "2" * 64
 RESTORED_STATE = "3" * 64
+IMPLEMENTATION_VERSION = "1.0.0"
+IMPLEMENTATION_DIGEST = "5" * 64
 
 
 def copy_database(source: Path, destination: Path) -> None:
@@ -42,6 +49,8 @@ def copy_database(source: Path, destination: Path) -> None:
 
 class DeterministicExecutor:
     executor_id = "deterministic-test-executor"
+    implementation_version = IMPLEMENTATION_VERSION
+    implementation_digest = IMPLEMENTATION_DIGEST
 
     def __init__(self, mode: str) -> None:
         self.mode = mode
@@ -124,6 +133,29 @@ class DeterministicExecutor:
         return result
 
 
+class DeterministicEnabledRegistry:
+    def attest(
+        self,
+        executor_id: str,
+        *,
+        implementation_version: str,
+        implementation_digest: str,
+        sandbox_profile: str,
+        requires_network: bool,
+    ) -> object:
+        if executor_id != DeterministicExecutor.executor_id:
+            raise StateTransitionError("fixture executor is not enabled")
+        if implementation_version != IMPLEMENTATION_VERSION:
+            raise StateTransitionError("fixture executor version mismatch")
+        if implementation_digest != IMPLEMENTATION_DIGEST:
+            raise StateTransitionError("fixture executor digest mismatch")
+        if sandbox_profile != "starcom-c3-default-deny-v1":
+            raise StateTransitionError("fixture executor sandbox mismatch")
+        if requires_network:
+            raise StateTransitionError("fixture executor network denied")
+        return object()
+
+
 class C3AdoptionExecutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -174,6 +206,7 @@ class C3AdoptionExecutionTests(unittest.TestCase):
             self.runtime.adoption,
             self.outbox,
         )
+        self.registry = DeterministicEnabledRegistry()
 
     def tearDown(self) -> None:
         self.runtime.close()
@@ -349,7 +382,9 @@ class C3AdoptionExecutionTests(unittest.TestCase):
     def test_worker_success_is_terminal_and_adapter_idempotent(self) -> None:
         requested = self.admitted()
         executor = DeterministicExecutor("success")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         completed = worker.process_next(worker_id="worker-1", now=E3, lease_seconds=30)
 
@@ -366,7 +401,9 @@ class C3AdoptionExecutionTests(unittest.TestCase):
     def test_worker_failure_before_effect_never_rolls_back(self) -> None:
         requested = self.admitted()
         executor = DeterministicExecutor("no-effect-failure")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         completed = worker.process_next(worker_id="worker-1", now=E3)
 
@@ -380,7 +417,9 @@ class C3AdoptionExecutionTests(unittest.TestCase):
     def test_post_effect_failure_requires_successful_rollback(self) -> None:
         requested = self.admitted()
         executor = DeterministicExecutor("post-effect-failure")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         completed = worker.process_next(worker_id="worker-1", now=E3)
 
@@ -398,7 +437,9 @@ class C3AdoptionExecutionTests(unittest.TestCase):
     def test_failed_rollback_is_explicit_and_never_false_success(self) -> None:
         requested = self.admitted()
         executor = DeterministicExecutor("rollback-failure")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         completed = worker.process_next(worker_id="worker-1", now=E3)
 
@@ -415,7 +456,9 @@ class C3AdoptionExecutionTests(unittest.TestCase):
     def test_hard_crash_recovery_reuses_adapter_idempotency_key(self) -> None:
         requested = self.admitted()
         executor = DeterministicExecutor("crash-once")
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox, executor)
+        worker = C3AdoptionExecutionWorker(
+            self.service, self.outbox, self.registry, executor
+        )
 
         with self.assertRaises(KeyboardInterrupt):
             worker.process_next(worker_id="worker-crashed", now=E3, lease_seconds=30)
@@ -444,7 +487,7 @@ class C3AdoptionExecutionTests(unittest.TestCase):
         )
         decision = self.authorize(preparation)
         requested = self.request(preparation, decision.decision_id)
-        worker = C3AdoptionExecutionWorker(self.service, self.outbox)
+        worker = C3AdoptionExecutionWorker(self.service, self.outbox, self.registry)
 
         completed = worker.process_next(worker_id="worker-disabled", now=E3)
 
@@ -458,6 +501,7 @@ class C3AdoptionExecutionTests(unittest.TestCase):
         worker = C3AdoptionExecutionWorker(
             self.service,
             self.outbox,
+            self.registry,
             DeterministicExecutor("success"),
         )
         completed = worker.process_next(worker_id="worker-1", now=E3)
