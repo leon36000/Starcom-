@@ -1,0 +1,77 @@
+name: Verify exact post-merge C3 worker attestation
+
+on:
+  push:
+    branches:
+      - control/postmerge-c3-worker-attestation-verify-20260814
+    paths:
+      - '.github/workflows/verify-postmerge-c3-worker-attestation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: starcom-postmerge-c3-worker-attestation
+  cancel-in-progress: false
+
+jobs:
+  verify-exact-merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact merge commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 7fa1bf1f44b7d9df738a9fd6681bcfde13f818d3
+          fetch-depth: 0
+
+      - name: Assert exact immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "7fa1bf1f44b7d9df738a9fd6681bcfde13f818d3"
+          test -f src/starcom/executor_registry.py
+          test -f tests/test_executor_worker_attestation.py
+          grep -Fq 'registry: C3ExecutorRegistry' src/starcom/adoption_execution.py
+          grep -Fq 'executor-registry-attestation' src/starcom/adoption_execution.py
+
+      - name: Verify complete repository
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'execution': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_adoption_execution.py'
+              ).countTestCases(),
+              'hardening': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_adoption_execution_hardening.py'
+              ).countTestCases(),
+              'attestation': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_executor_worker_attestation.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          expected = {
+              'execution': 10,
+              'hardening': 6,
+              'attestation': 12,
+              'total': 271,
+          }
+          print(counts)
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+          python3 -m unittest discover -s tests -p 'test_adoption_execution.py' -v
+          python3 -m unittest discover -s tests -p 'test_adoption_execution_hardening.py' -v
+          python3 -m unittest discover -s tests -p 'test_executor_worker_attestation.py' -v
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover \
+            -s tests -p 'test_*execution*.py'
