@@ -1,0 +1,69 @@
+name: Diagnose exact STARCOM C4 architecture review RED
+
+on:
+  push:
+    branches:
+      - control/c4-architecture-review-red-20260814
+    paths:
+      - '.github/workflows/diagnose-c4-architecture-review-red.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact RED branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: agent/c4-architecture-review
+          fetch-depth: 0
+
+      - name: Freeze exact RED SHA and counts
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "a1c490de2da478f2ae9bfc7c6c7010b360d65194"
+          python3 - <<'PY'
+          import unittest
+          counts = {
+              'review': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_review.py'
+              ).countTestCases(),
+              'hardening': unittest.defaultTestLoader.discover(
+                  'tests', pattern='test_architecture_review_hardening.py'
+              ).countTestCases(),
+              'total': unittest.defaultTestLoader.discover('tests').countTestCases(),
+          }
+          print(counts)
+          expected = {'review': 9, 'hardening': 7, 'total': 316}
+          if counts != expected:
+              raise SystemExit(f'expected {expected}, found {counts}')
+          PY
+
+      - name: Run focused RED and assert explicit seam
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          for suite in architecture_review architecture_review_hardening; do
+            set +e
+            python3 -m unittest discover -s tests -p "test_${suite}.py" -v \
+              > "/tmp/red-${suite}.log" 2>&1
+            status=$?
+            set -e
+            cat "/tmp/red-${suite}.log"
+            test "$status" -ne 0
+            grep -Fq 'C4 architecture review authority is not implemented' "/tmp/red-${suite}.log"
+            ! grep -Fq 'ImportError' "/tmp/red-${suite}.log"
+            ! grep -Fq 'ModuleNotFoundError' "/tmp/red-${suite}.log"
+            ! grep -Fq 'SyntaxError' "/tmp/red-${suite}.log"
+          done
+          grep -Fq 'Ran 9 tests' /tmp/red-architecture_review.log
+          grep -Fq 'Ran 7 tests' /tmp/red-architecture_review_hardening.log
