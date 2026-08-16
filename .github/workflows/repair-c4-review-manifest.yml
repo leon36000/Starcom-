@@ -1,0 +1,134 @@
+name: Repair only STARCOM C4 review manifest drift
+
+on:
+  push:
+    branches:
+      - control/c4-review-manifest-repair-20260816
+    paths:
+      - '.github/workflows/repair-c4-review-manifest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: starcom-c4-review-manifest-repair
+  cancel-in-progress: false
+
+jobs:
+  prove-red-repair-green:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: control/c4-review-manifest-repair-20260816
+          fetch-depth: 0
+
+      - name: Freeze exact failed C4 review head
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'STARCOM Verification Bot'
+          git config user.email 'starcom-verification-bot@users.noreply.github.com'
+          git fetch origin fix/c4-architecture-review main
+          failed="$(git rev-parse origin/fix/c4-architecture-review)"
+          base="$(git rev-parse origin/main)"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          test "$failed" = '9b4e47ab7e8091ac3cfbb275003e4b8838a0307f'
+          test "$base" = '60b04d3c45df231a1df6af09abaf3ee01a77adf6'
+          test "$(git merge-base "$base" "$failed")" = "$base"
+          git switch -C fix/c4-architecture-review "$failed"
+
+      - name: Re-prove exact manifest RED
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          set +e
+          python3 scripts/build_manifest.py \
+            --root . --manifest MANIFEST.sha256 --json \
+            > /tmp/manifest-red.json
+          status=$?
+          set -e
+          cat /tmp/manifest-red.json
+          test "$status" -ne 0
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path('/tmp/manifest-red.json').read_text())
+          expected = [
+              'docs/superpowers/plans/2026-08-14-c4-architecture-review.md',
+              'docs/superpowers/specs/2026-08-14-c4-architecture-review-design.md',
+              'src/starcom/architecture_review.py',
+              'tests/test_architecture_review.py',
+              'tests/test_architecture_review_hardening.py',
+          ]
+          if payload.get('ok') is not False:
+              raise SystemExit(f'expected manifest RED, found {payload}')
+          if payload.get('missing') != []:
+              raise SystemExit(f'unexpected missing entries: {payload.get("missing")}')
+          if payload.get('mismatched') != []:
+              raise SystemExit(
+                  f'unexpected mismatched entries: {payload.get("mismatched")}'
+              )
+          if payload.get('unlisted') != expected:
+              raise SystemExit(
+                  f'expected only {expected}, found {payload.get("unlisted")}'
+              )
+          print('causal RED confirmed: exactly five C4 review files are unlisted')
+          PY
+
+      - name: Apply the single minimal repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(git rev-parse HEAD)"
+          python3 scripts/build_manifest.py \
+            --root . --manifest MANIFEST.sha256 --write
+          test "$(git rev-parse HEAD)" = "$before"
+          git diff --name-only > /tmp/changed-files.txt
+          cat /tmp/changed-files.txt
+          test "$(wc -l < /tmp/changed-files.txt | tr -d ' ')" -eq 1
+          grep -Fxq 'MANIFEST.sha256' /tmp/changed-files.txt
+          git diff --check
+
+      - name: Verify complete repository after repair
+        shell: bash
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_repo.py
+          python3 -m compileall -q src scripts tests
+          python3 scripts/secret_scan.py --root .
+          PYTHONHASHSEED=7 python3 -m unittest discover -s tests
+          PYTHONWARNINGS=error python3 -X dev -m unittest discover \
+            -s tests -p 'test_architecture_review*.py'
+          git diff --check
+
+      - name: Commit only the repaired manifest
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add MANIFEST.sha256
+          test "$(git diff --cached --name-only)" = 'MANIFEST.sha256'
+          git diff --cached --check
+          git commit -m 'build: refresh manifest for C4 architecture review'
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Recheck immutable refs and publish repaired branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/c4-architecture-review main
+          test "$(git rev-parse origin/fix/c4-architecture-review)" = '${{ steps.refs.outputs.failed }}'
+          test "$(git rev-parse origin/main)" = '${{ steps.refs.outputs.base }}'
+          git push origin 'HEAD:refs/heads/fix/c4-architecture-review'
+          echo "published=${{ steps.commit.outputs.sha }}"
