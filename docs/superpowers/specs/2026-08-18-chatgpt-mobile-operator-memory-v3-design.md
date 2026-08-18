@@ -2,13 +2,15 @@
 
 **Date:** 2026-08-18
 **Scope:** ChatGPT mobile/operator continuity for STARCOM only
-**Status:** design approved in principle; implementation requires plan and gated execution
+**Status:** user-approved architecture; written-spec review gate pending before implementation planning
 
 ## Purpose
 
 This design defines a durable memory system for the ChatGPT operator that coordinates STARCOM from mobile and other ChatGPT clients. Its purpose is to preserve project continuity across conversations: current repository state, user decisions, gates, worktrees, workers, model/tool availability, evidence, contradictions, failures, handoffs, and the next safe actions.
 
 This memory is external operator infrastructure. It is **not** STARCOM product memory, runtime state, Trust Plane, Proof Engine, ledger, Mission Kernel, Durable Engine, or any other sovereign STARCOM authority. Using Neon, MongoDB Atlas, MCP_TO_PC, OpenClaw, VS Code, Codex, Claude Code, OpenHands, local models, cloud models, or PC2 RAG while developing STARCOM does not imply STARCOM runtime integration or component adoption.
+
+The design must remain functional even when ChatGPT's native cross-conversation memory is absent, unavailable, disabled, stale, or not writable. Native ChatGPT memory may be helpful as an opportunistic hint, but it is never the canonical continuity layer. The durable contract is reconstructed from ChatGPT Project instructions plus the STARCOM operator-memory sources exposed through connected tools.
 
 ## Success criteria
 
@@ -25,7 +27,8 @@ The system must:
 - fail closed when memory conflicts with live repository or higher-authority evidence;
 - never store secrets or private credentials;
 - never give MongoDB or PC2 RAG canonical authority;
-- remain usable from ChatGPT mobile through available connected tools and MCP infrastructure.
+- remain usable from ChatGPT mobile through available connected tools and MCP infrastructure;
+- recover correctly without relying on ChatGPT native memory.
 
 ## Operator identity and authority boundary
 
@@ -46,6 +49,26 @@ Authority precedence for operator-memory decisions is:
 
 Similarity, recency, RRF score, embedding distance, model confidence, or agreement among agents never increases authority.
 
+## ChatGPT Project instructions contract
+
+The STARCOM ChatGPT Project instructions are the stable boot contract for mobile conversations. Their canonical editable source is maintained in `.starcom-memory/PROJECT_INSTRUCTIONS_PROPOSAL.md` and versioned with the local source-pack manifest.
+
+The instructions must remain concise enough for the ChatGPT Project field while preserving these non-negotiable rules:
+
+- identify this as the STARCOM ChatGPT-mobile operator memory;
+- use MCP_TO_PC proactively when relevant;
+- recover durable memory before substantial work;
+- inventory workers/projects/hosts/models live rather than relying on stale counts;
+- exclude protected connection/workspace-hardening sessions;
+- use bounded isolated multi-agent work, TDD, independent review, VS Code debugging, and OpenClaw when appropriate;
+- treat PC2 RAG and models as non-authoritative evidence sources;
+- use Neon as canonical operator memory and Mongo as derived archive/projection;
+- verify mutable claims live and fail closed on unresolved contradictions;
+- never store secrets;
+- never confuse operator infrastructure with STARCOM runtime adoption or product authority.
+
+If a future ChatGPT capability allows project instructions to be updated programmatically, the exact source-pack version and digest must be recorded. Until then, the source file is the durable copy used to update the Project UI.
+
 ## Four-layer architecture
 
 ### Layer 1 — local `.starcom-memory` recovery pack
@@ -55,7 +78,7 @@ Similarity, recency, RRF score, embedding distance, model confidence, or agreeme
 The stable file set is:
 
 - `PROFILE.md` — durable identity, doctrine, protected boundaries, operator capabilities;
-- `PROJECT_INSTRUCTIONS_PROPOSAL.md` — copyable ChatGPT Project instructions;
+- `PROJECT_INSTRUCTIONS_PROPOSAL.md` — canonical copyable ChatGPT Project instructions;
 - `MEMORY_PROTOCOL.md` — boot, retrieval, write, promotion, contradiction, and handoff rules;
 - `POSTGRES_SCHEMA.sql` — Neon/PostgreSQL operator-memory schema;
 - `MONGO_SCHEMA.md` — Mongo archive/projection contract;
@@ -98,7 +121,7 @@ The routine ChatGPT writer can append remembered/observed context but cannot sel
 
 ### Layer 3 — dedicated MongoDB Atlas archive/projection
 
-Create a separate MongoDB Atlas project or, if account limits require, a clearly isolated STARCOM database/cluster namespace with no cross-project collections.
+The preferred deployment is a dedicated MongoDB Atlas project for STARCOM ChatGPT memory. If Atlas account/project limits prevent this, implementation must stop and record the limitation before using a shared Atlas project; a fallback shared-project design requires a separately reviewed hard-isolation amendment rather than silently weakening this design.
 
 MongoDB is not a second source of truth. It is a rebuildable archive/projection for material that benefits from document storage, including:
 
@@ -240,7 +263,8 @@ This project creates operator-memory infrastructure and instructions for ChatGPT
 - auto-merge issue #55 or any unrelated engineering branch;
 - modify protected connection-hardening sessions;
 - persist secrets;
-- permit routine memory writers to self-certify.
+- permit routine memory writers to self-certify;
+- depend on ChatGPT native memory for correctness.
 
 ## Verification gates
 
@@ -256,7 +280,8 @@ Implementation is complete only after all of the following are demonstrated:
 8. Mongo projection can be rebuilt from Neon/source-pack lineage and cannot promote authority.
 9. Local source-pack hashes verify exactly.
 10. A fresh ChatGPT-mobile-style resume query reconstructs project identity, current checkpoint, unresolved contradictions, protected boundaries, active gate, and next actions from durable sources.
-11. No secrets are stored in Neon, Mongo, source pack, handoff receipts, or retrieval receipts.
-12. Independent review finds no unresolved critical memory-isolation, authority, or provenance defect.
+11. The same resume test succeeds with native ChatGPT memory treated as unavailable.
+12. No secrets are stored in Neon, Mongo, source pack, handoff receipts, or retrieval receipts.
+13. Independent review finds no unresolved critical memory-isolation, authority, or provenance defect.
 
 Only after these gates may the operator-memory v3 state be treated as the preferred durable continuity layer for ChatGPT mobile on STARCOM.
