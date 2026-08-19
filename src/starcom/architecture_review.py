@@ -26,6 +26,28 @@ _MAX_PUBLIC_KEY_BYTES = 8 * 1024
 _ROOT_ACTION = "c4.architecture-reviewer.accept"
 _ROOT_PURPOSE = "C4_ARCHITECTURE_REVIEW"
 _ROOT_EVENT_KIND = "C4_ARCHITECTURE_REVIEWER_ACCEPTED"
+_REVIEW_GATE_EFFECT = "NO_PUBLICATION_NO_DEPLOYMENT"
+_REVIEW_TOP_LEVEL_KEYS = frozenset(
+    {
+        "review_id",
+        "candidate_id",
+        "architecture_id",
+        "input_set_id",
+        "manifest_sha256",
+        "input_set_digest",
+        "reviewer_identity",
+        "reviewer_environment",
+        "independence_basis",
+        "reviewed_at_utc",
+        "structural_verification_result",
+        "security_verification_result",
+        "evidence_binding_result",
+        "verdict",
+        "findings",
+        "gate_effect",
+    }
+)
+_VERIFICATION_RESULTS = frozenset({"PASS", "FAIL"})
 
 
 class C4ArchitectureReviewVerdict(str, Enum):
@@ -244,6 +266,28 @@ class C4ArchitectureReviewService:
             raise ValidationError("timestamp must be RFC 3339") from exc
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValidationError("timestamp must be timezone-aware")
+        return value
+
+    @staticmethod
+    def _canonical_utc_timestamp(value: object, field: str) -> str:
+        if not isinstance(value, str):
+            raise ValidationError(f"{field} must be a canonical UTC timestamp")
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError as exc:
+            raise ValidationError(f"{field} must be a canonical UTC timestamp") from exc
+        if parsed.strftime("%Y-%m-%dT%H:%M:%S.%fZ") != value:
+            raise ValidationError(f"{field} must be a canonical UTC timestamp")
+        return value
+
+    @staticmethod
+    def _sha256_text(value: object, field: str) -> str:
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValidationError(f"{field} must be a lowercase SHA-256 digest")
         return value
 
     @staticmethod
@@ -857,14 +901,14 @@ class C4ArchitectureReviewService:
                 defects.append("REVIEWER_ROOT_LEDGER_HASH_MISMATCH")
                 event_mismatch = True
             try:
-                payload = json.loads(str(event["payload_json"]))
-                if not isinstance(payload, dict):
+                event_payload = json.loads(str(event["payload_json"]))
+                if not isinstance(event_payload, dict):
                     raise ValueError("root event payload must be an object")
             except (json.JSONDecodeError, TypeError, ValueError):
                 defects.append("REVIEWER_ROOT_LEDGER_PAYLOAD_INVALID")
                 event_mismatch = True
             else:
-                if payload != expected_payload:
+                if event_payload != expected_payload:
                     defects.append("REVIEWER_ROOT_LEDGER_PAYLOAD_MISMATCH")
                     event_mismatch = True
             if event_mismatch:
@@ -908,23 +952,49 @@ class C4ArchitectureReviewService:
         if not isinstance(signature, bytes) or not signature:
             raise ValidationError("signature must be non-empty bytes")
 
-        root_verification = self.verify_reviewer_root(key_id)
-        if not root_verification.ok:
-            raise IntegrityError(
-                "reviewer root failed verification",
-                {"defects": list(root_verification.defects)},
-            )
-        root = self.get_reviewer_root(key_id)
         try:
-            signature_ok = self.signature_verifier.verify(
-                root.public_key_pem,
-                payload,
-                signature,
-            )
-        except (OSError, TypeError, ValueError) as exc:
-            raise IntegrityError("C4 architecture review signature verification failed") from exc
-        if not signature_ok:
-            raise IntegrityError("C4 architecture review signature verification failed")
+            with self.database.transaction() as connection:
+                root_row = connection.execute(
+                    "SELECT * FROM c4_architecture_reviewer_roots WHERE key_id = ?",
+                    (key_id,),
+                ).fetchone()
+                if root_row is None:
+                    raise IntegrityError("reviewer root failed verification")
+                try:
+                    verified_root = self._root_from_row(root_row)
+                except (TypeError, ValueError) as exc:
+                    raise IntegrityError("reviewer root failed verification") from exc
+
+                root_verification = self.verify_reviewer_root(key_id)
+                if not root_verification.ok:
+                    raise IntegrityError(
+                        "reviewer root failed verification",
+                        {"defects": list(root_verification.defects)},
+                    )
+
+                try:
+                    current_root = self.get_reviewer_root(key_id)
+                except (NotFoundError, TypeError, ValueError) as exc:
+                    raise IntegrityError("reviewer root changed during verification") from exc
+                if current_root != verified_root:
+                    raise IntegrityError("reviewer root changed during verification")
+
+                try:
+                    signature_ok = self.signature_verifier.verify(
+                        verified_root.public_key_pem,
+                        payload,
+                        signature,
+                    )
+                except (OSError, TypeError, ValueError) as exc:
+                    raise IntegrityError(
+                        "C4 architecture review signature verification failed"
+                    ) from exc
+                if not signature_ok:
+                    raise IntegrityError(
+                        "C4 architecture review signature verification failed"
+                    )
+        except sqlite3.Error as exc:
+            raise IntegrityError("reviewer root verification snapshot failed") from exc
 
         try:
             decoded = payload.decode("utf-8", errors="strict")
@@ -939,14 +1009,46 @@ class C4ArchitectureReviewService:
                 value[name] = item
             return value
 
+        def reject_nonstandard_constant(value: str) -> None:
+            raise ValidationError(f"non-standard JSON constant is forbidden: {value}")
+
         try:
-            parsed = json.loads(decoded, object_pairs_hook=reject_duplicate_keys)
+            parsed = json.loads(
+                decoded,
+                object_pairs_hook=reject_duplicate_keys,
+                parse_constant=reject_nonstandard_constant,
+            )
         except ValidationError:
             raise
         except json.JSONDecodeError as exc:
             raise ValidationError("review payload must be valid JSON") from exc
         if not isinstance(parsed, dict):
             raise ValidationError("review payload must be a JSON object")
+
+        if frozenset(parsed) != _REVIEW_TOP_LEVEL_KEYS:
+            raise ValidationError("review payload must contain exactly the closed top-level schema")
+        for field in (
+            "review_id",
+            "candidate_id",
+            "architecture_id",
+            "input_set_id",
+            "reviewer_identity",
+        ):
+            self._required_text(parsed[field], field)
+        self._sha256_text(parsed["manifest_sha256"], "manifest_sha256")
+        self._sha256_text(parsed["input_set_digest"], "input_set_digest")
+        self._canonical_utc_timestamp(parsed["reviewed_at_utc"], "reviewed_at_utc")
+        for field in (
+            "structural_verification_result",
+            "security_verification_result",
+            "evidence_binding_result",
+        ):
+            if parsed[field] not in _VERIFICATION_RESULTS:
+                raise ValidationError(f"{field} must be PASS or FAIL")
+        if parsed["verdict"] not in {verdict.value for verdict in C4ArchitectureReviewVerdict}:
+            raise ValidationError("verdict is not a permitted C4 architecture review verdict")
+        if parsed["gate_effect"] != _REVIEW_GATE_EFFECT:
+            raise ValidationError("gate_effect must forbid publication and deployment")
 
         raise StateTransitionError(_NOT_IMPLEMENTED)
 
