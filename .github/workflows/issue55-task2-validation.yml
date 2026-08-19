@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: issue55-task2-${{ github.workflow }}-${{ github.ref }}
@@ -41,4 +43,44 @@ jobs:
           python -m unittest discover -s tests -p 'test_enforce_cli_boundary_imports.py' -v
           python -m unittest discover -s tests -p 'test_enforce_cli_output.py' -v
       - name: Classify Task2 and bounded Task3 failures
-        run: python scripts/verify_issue55_task2.py
+        id: classify
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/verify_issue55_task2.py 2>&1 | tee issue55_task2_classifier.log
+      - name: Publish exact classifier summary on draft PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          {
+            echo '<!-- starcom-issue55-task2-validation -->'
+            echo '## STARCOM Issue #55 Task2 — exact CI classification'
+            echo
+            echo "- Head: \`$HEAD_SHA\`"
+            echo "- Classifier step outcome: \`${{ steps.classify.outcome }}\`"
+            echo "- Run: $RUN_URL"
+            echo
+            echo '```json'
+            if [ -f issue55_task2_summary.json ]; then
+              cat issue55_task2_summary.json
+            else
+              echo '{"result":"HARNESS_ERROR","reason":"summary file missing","log_tail":['
+              tail -n 80 issue55_task2_classifier.log | python -c 'import json,sys; print(",\n".join(json.dumps(line.rstrip("\n")) for line in sys.stdin))'
+              echo ']}'
+            fi
+            echo '```'
+            echo
+            echo '**Validation only — do not merge.** This comment is CI evidence for the isolated Task2 gate, not product adoption, deployment, certification, or promotion.'
+          } > issue55_task2_comment.md
+          gh pr comment "$PR_NUMBER" --body-file issue55_task2_comment.md
+      - name: Enforce exact Task2 classifier result
+        if: always()
+        shell: bash
+        run: test "${{ steps.classify.outcome }}" = "success"
