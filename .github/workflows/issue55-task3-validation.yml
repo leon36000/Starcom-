@@ -1,0 +1,67 @@
+name: STARCOM Issue 55 Task3 focused TDD
+
+on:
+  push:
+    branches:
+      - feat/issue-55-c4-independent-review
+  pull_request:
+    branches:
+      - main
+    paths:
+      - src/starcom/architecture_review.py
+      - tests/test_architecture_review.py
+      - .github/workflows/issue55-task3-validation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue55-task3-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-task3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+      - name: Run bounded Task3 TDD tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONPATH: src:tests:.
+        run: |
+          python - <<'PY'
+          import sys
+          import unittest
+          import test_architecture_review as m
+
+          prefixes = (
+              "test_invalid_utf8_bad_signature_",
+              "test_malformed_json_bad_signature_",
+              "test_validly_signed_",
+              "test_signed_payload_",
+              "test_review_signature_verification_uses_",
+          )
+          names = sorted(
+              name for name in dir(m.C4ArchitectureReviewTests)
+              if name.startswith(prefixes)
+          )
+          print("TASK3_SELECTED", len(names), *names, sep="\n")
+          result = unittest.TextTestRunner(verbosity=2).run(
+              unittest.TestSuite(m.C4ArchitectureReviewTests(name) for name in names)
+          )
+          print(
+              "TASK3_RESULT",
+              result.wasSuccessful(),
+              "RUN", result.testsRun,
+              "FAILURES", len(result.failures),
+              "ERRORS", len(result.errors),
+              "SKIPPED", len(result.skipped),
+          )
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY
