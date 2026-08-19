@@ -899,6 +899,55 @@ class C4ArchitectureReviewService:
         actor: str,
         occurred_at: str | None = None,
     ) -> C4ArchitectureReview:
+        candidate_id = self._required_text(candidate_id, "candidate_id")
+        key_id = self._required_text(key_id, "key_id")
+        actor = self._required_text(actor, "actor")
+        self._timestamp(occurred_at or utc_now())
+        if not isinstance(payload, bytes) or not payload:
+            raise ValidationError("payload must be non-empty bytes")
+        if not isinstance(signature, bytes) or not signature:
+            raise ValidationError("signature must be non-empty bytes")
+
+        root_verification = self.verify_reviewer_root(key_id)
+        if not root_verification.ok:
+            raise IntegrityError(
+                "reviewer root failed verification",
+                {"defects": list(root_verification.defects)},
+            )
+        root = self.get_reviewer_root(key_id)
+        try:
+            signature_ok = self.signature_verifier.verify(
+                root.public_key_pem,
+                payload,
+                signature,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise IntegrityError("C4 architecture review signature verification failed") from exc
+        if not signature_ok:
+            raise IntegrityError("C4 architecture review signature verification failed")
+
+        try:
+            decoded = payload.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValidationError("review payload must be valid UTF-8") from exc
+
+        def reject_duplicate_keys(pairs):  # type: ignore[no-untyped-def]
+            value: dict[str, object] = {}
+            for name, item in pairs:
+                if name in value:
+                    raise ValidationError(f"duplicate JSON key: {name}")
+                value[name] = item
+            return value
+
+        try:
+            parsed = json.loads(decoded, object_pairs_hook=reject_duplicate_keys)
+        except ValidationError:
+            raise
+        except json.JSONDecodeError as exc:
+            raise ValidationError("review payload must be valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValidationError("review payload must be a JSON object")
+
         raise StateTransitionError(_NOT_IMPLEMENTED)
 
     def get_review(self, review_id: str) -> C4ArchitectureReview:
