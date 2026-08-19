@@ -1,0 +1,44 @@
+name: STARCOM Issue 55 Task2 exact validation
+
+on:
+  push:
+    branches:
+      - chatgpt/validation-issue55-task2-13dc9c3f-20260819
+  pull_request:
+    branches:
+      - main
+    paths:
+      - src/starcom/architecture_review.py
+      - tests/test_architecture_review.py
+      - tests/test_architecture_review_verification.py
+      - tests/test_issue55_validation_snapshot.py
+      - scripts/verify_issue55_task2.py
+      - .github/workflows/issue55-task2-validation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue55-task2-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-task2-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact validation snapshot
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile exact source and tests
+        run: python -m compileall -q src tests scripts/verify_issue55_task2.py
+      - name: Enforce repository policy gates
+        run: |
+          python -m unittest tests.test_enforce_no_stubs -v
+          python -m unittest tests.test_enforce_cli_boundary_imports -v
+          python -m unittest tests.test_enforce_cli_output -v
+      - name: Classify Task2 and bounded Task3 failures
+        run: python scripts/verify_issue55_task2.py
