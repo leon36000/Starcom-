@@ -9,6 +9,7 @@ import unittest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPOSITORY_ROOT / "src"
 TESTS_ROOT = REPOSITORY_ROOT / "tests"
+SUMMARY_PATH = REPOSITORY_ROOT / "issue55_task2_summary.json"
 for entry in (str(SRC_ROOT), str(TESTS_ROOT), str(REPOSITORY_ROOT)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
@@ -90,8 +91,13 @@ def _full_suite() -> unittest.TestSuite:
     return unittest.defaultTestLoader.discover(
         start_dir=str(TESTS_ROOT),
         pattern="test_*.py",
-        top_level_dir=str(REPOSITORY_ROOT),
     )
+
+
+def _write_summary(summary: dict[str, object]) -> str:
+    rendered = json.dumps(summary, indent=2, sort_keys=True)
+    SUMMARY_PATH.write_text(rendered + "\n", encoding="utf-8")
+    return rendered
 
 
 def main() -> int:
@@ -145,7 +151,7 @@ def main() -> int:
     )
     gate_ok = focused_ok and full_classification_ok
 
-    summary = {
+    summary: dict[str, object] = {
         "gate": "STARCOM_C4_ISSUE55_TASK2",
         "result": "PASS" if gate_ok else "FAIL",
         "focused": {
@@ -180,8 +186,9 @@ def main() -> int:
             "unexpected_records": unexpected,
         },
     }
+    rendered = _write_summary(summary)
     print("\n===== MACHINE-READABLE SUMMARY =====", flush=True)
-    print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+    print(rendered, flush=True)
     print(
         "STARCOM_ISSUE55_TASK2_GATE=" + ("PASS" if gate_ok else "FAIL"),
         flush=True,
