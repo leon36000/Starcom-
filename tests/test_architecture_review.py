@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -591,6 +592,38 @@ class C4ArchitectureReviewTests(unittest.TestCase):
                 occurred_at=T1,
             )
 
+    @staticmethod
+    def valid_review_payload(**overrides) -> dict[str, object]:  # type: ignore[no-untyped-def]
+        value: dict[str, object] = {
+            "review_id": "review-001",
+            "candidate_id": "candidate-c4",
+            "architecture_id": "architecture-c4",
+            "input_set_id": "input-set-c4",
+            "manifest_sha256": "a" * 64,
+            "input_set_digest": "b" * 64,
+            "reviewer_identity": "independent-c4-reviewer",
+            "reviewer_environment": {},
+            "independence_basis": {},
+            "reviewed_at_utc": T2,
+            "structural_verification_result": "PASS",
+            "security_verification_result": "PASS",
+            "evidence_binding_result": "PASS",
+            "verdict": "C4_ARCHITECTURE_ACCEPTED",
+            "findings": [],
+            "gate_effect": "NO_PUBLICATION_NO_DEPLOYMENT",
+        }
+        value.update(overrides)
+        return value
+
+    def assert_signed_payload_validation_error(self, value: object) -> None:
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.assert_signature_boundary(
+            payload,
+            self.verifier.sign(PUBLIC_KEY, payload),
+            ValidationError,
+        )
+        self.assertEqual(self.verifier.calls[-1], ("verify", payload))
+
     def test_invalid_utf8_bad_signature_fails_integrity_before_parser_semantics(self) -> None:
         self.assert_signature_boundary(b"\xff", b"bad", IntegrityError)
         self.assertEqual(self.verifier.calls[-1], ("verify", b"\xff"))
@@ -620,3 +653,60 @@ class C4ArchitectureReviewTests(unittest.TestCase):
             payload, self.verifier.sign(PUBLIC_KEY, payload), ValidationError
         )
         self.assertEqual(self.verifier.calls[-1], ("verify", payload))
+
+    def test_signed_payload_rejects_non_object_top_level(self) -> None:
+        self.assert_signed_payload_validation_error([])
+
+    def test_signed_payload_requires_exact_top_level_keys(self) -> None:
+        missing = self.valid_review_payload()
+        missing.pop("review_id")
+        unexpected = self.valid_review_payload(unexpected_field="forbidden")
+        for value in (missing, unexpected):
+            with self.subTest(value=value):
+                self.assert_signed_payload_validation_error(value)
+
+    def test_signed_payload_rejects_invalid_sha256_digests(self) -> None:
+        cases = (
+            self.valid_review_payload(manifest_sha256="A" * 64),
+            self.valid_review_payload(manifest_sha256="a" * 63),
+            self.valid_review_payload(manifest_sha256="g" * 64),
+            self.valid_review_payload(input_set_digest="B" * 64),
+            self.valid_review_payload(input_set_digest="b" * 65),
+            self.valid_review_payload(input_set_digest="z" * 64),
+        )
+        for value in cases:
+            with self.subTest(value=value):
+                self.assert_signed_payload_validation_error(value)
+
+    def test_signed_payload_requires_canonical_utc_review_timestamp(self) -> None:
+        for timestamp in (
+            "2026-08-16T12:02:00Z",
+            "2026-08-16T12:02:00.000000+00:00",
+            "2026-08-16T12:02:00.000000-04:00",
+            "not-a-timestamp",
+        ):
+            with self.subTest(timestamp=timestamp):
+                self.assert_signed_payload_validation_error(
+                    self.valid_review_payload(reviewed_at_utc=timestamp)
+                )
+
+    def test_signed_payload_rejects_invalid_verification_results(self) -> None:
+        for field in (
+            "structural_verification_result",
+            "security_verification_result",
+            "evidence_binding_result",
+        ):
+            with self.subTest(field=field):
+                self.assert_signed_payload_validation_error(
+                    self.valid_review_payload(**{field: "INCONCLUSIVE"})
+                )
+
+    def test_signed_payload_rejects_invalid_verdict(self) -> None:
+        self.assert_signed_payload_validation_error(
+            self.valid_review_payload(verdict="C4_ARCHITECTURE_MAYBE")
+        )
+
+    def test_signed_payload_requires_no_publication_no_deployment_gate(self) -> None:
+        self.assert_signed_payload_validation_error(
+            self.valid_review_payload(gate_effect="PUBLISH_AND_DEPLOY")
+        )
