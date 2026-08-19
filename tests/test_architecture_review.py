@@ -616,12 +616,19 @@ class C4ArchitectureReviewTests(unittest.TestCase):
         return value
 
     def assert_signed_payload_validation_error(self, value: object) -> None:
+        if not getattr(self, "_payload_validation_root_accepted", False):
+            self.accept()
+            self._payload_validation_root_accepted = True
         payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        self.assert_signature_boundary(
-            payload,
-            self.verifier.sign(PUBLIC_KEY, payload),
-            ValidationError,
-        )
+        with self.assertRaises(ValidationError):
+            self.service().admit_review(
+                "candidate-c4",
+                "review-key",
+                payload,
+                self.verifier.sign(PUBLIC_KEY, payload),
+                actor="c4-review-admitter",
+                occurred_at=T1,
+            )
         self.assertEqual(self.verifier.calls[-1], ("verify", payload))
 
     def test_invalid_utf8_bad_signature_fails_integrity_before_parser_semantics(self) -> None:
