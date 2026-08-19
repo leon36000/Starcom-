@@ -710,3 +710,45 @@ class C4ArchitectureReviewTests(unittest.TestCase):
         self.assert_signed_payload_validation_error(
             self.valid_review_payload(gate_effect="PUBLISH_AND_DEPLOY")
         )
+
+    def test_review_signature_verification_uses_the_verified_root_snapshot(self) -> None:
+        root = self.accept()
+        service = self.service()
+        self.graph.database.connection.execute(
+            "DROP TRIGGER c4_architecture_reviewer_roots_no_update"
+        )
+        attacker_key = b"attacker-ed25519-public-key"
+        original_get = service.get_reviewer_root
+        mutated = False
+
+        def mutate_then_get(key_id: str):  # type: ignore[no-untyped-def]
+            nonlocal mutated
+            if not mutated:
+                self.graph.database.connection.execute(
+                    "UPDATE c4_architecture_reviewer_roots SET public_key_pem = ? WHERE key_id = ?",
+                    (attacker_key, root.key_id),
+                )
+                mutated = True
+            return original_get(key_id)
+
+        service.get_reviewer_root = mutate_then_get  # type: ignore[method-assign]
+        payload = b"{}"
+        with self.assertRaises(IntegrityError):
+            service.admit_review(
+                "candidate-c4",
+                root.key_id,
+                payload,
+                self.verifier.sign(attacker_key, payload),
+                actor="c4-review-admitter",
+                occurred_at=T2,
+            )
+        self.assertTrue(mutated)
+
+    def test_validly_signed_nonstandard_json_constant_is_rejected(self) -> None:
+        payload = b'{"security_verification_result":NaN}'
+        self.assert_signature_boundary(
+            payload,
+            self.verifier.sign(PUBLIC_KEY, payload),
+            ValidationError,
+        )
+        self.assertEqual(self.verifier.calls[-1], ("verify", payload))
