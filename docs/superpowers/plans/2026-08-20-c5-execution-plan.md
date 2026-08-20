@@ -251,3 +251,15 @@ Files:
 - [ ] Step 5: Pull the merged main, rerun the final gate, and create source/report artifacts.
 
   Generate a git archive from the merged main commit, compute SHA-256, verify the C5 module/tests/plan/manifest are present, and write a French reprise report that preserves C5_EXECUTION_PLAN_ADMITTED_NOT_STARTED and all external truth guardrails.
+
+## Verification evidence before integration
+
+- Baseline on main@b087c58: 444/444 tests, compile/scans/style/manifest green.
+- C5 focused suite: 6/6 tests PASS.
+- C4 regression suite: 6/6 tests PASS.
+- Repository policy suite: 6/6 tests PASS; smoke suite: 1/1 PASS.
+- Full deterministic gate on commit 5a0f3fc: 450/450 tests PASS in 216.950 seconds.
+- Compilation: PASS; secret scan: 0 findings; text-style: 0 findings.
+- Manifest: 118 entries checked, with mismatched/missing/unlisted all empty.
+- Real-C4 smoke: a signed plan was admitted and independently verified through the C4 service using the C4 c3_run_id binding.
+- Remaining integration action: push, CI-verify, SHA-checked merge, and source/report archive.
