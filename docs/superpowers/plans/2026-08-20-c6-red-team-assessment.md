@@ -117,13 +117,14 @@ Evidence recorded from commands that actually ran:
 
 - Initial RED: `ModuleNotFoundError: No module named 'starcom.red_team'` before implementation.
 - Focused C6 suite: **7/7 PASS**.
+- The focused C6 fixture now admits a real C5 execution-plan graph and keeps distinct C5/C6 trust-root keys; the suite remains **7/7 PASS**.
 - C5 execution-plan regression suite: **6/6 PASS**.
 - C4 architecture regression suites: **165/165 PASS**.
 - Runtime smoke: **1/1 PASS**; repository policy: **6/6 PASS**.
 - Real-C5-to-C6 smoke: **REAL_C5_C6_OK**, with C5 verification and C6 verification both true.
 - Forbidden operational-surface scan: no matching method definitions in `src/starcom/red_team.py`.
 - Manifest after implementation: **122 entries**, no missing, mismatched, or unlisted paths.
-- Full deterministic gate: **PASS** on the implementation worktree; **457/457 tests** in 209.168 seconds.
+- Full deterministic gate: **PASS** on the implementation worktree; **457/457 tests** in 211.087 seconds.
 - Compilation: **PASS**; secret scan: **0 findings**; text-style: **0 findings**; manifest: **122/122** with no mismatch, missing, or unlisted paths.
 - CI exact-head run and merge SHA: pending.
 

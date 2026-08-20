@@ -1,132 +1,50 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from types import SimpleNamespace
 
 from starcom.canonical import canonical_json
 from starcom.continuity import ContinuityService
-from starcom.db import Database
 from starcom.errors import ConflictError, IntegrityError, StateTransitionError, ValidationError
-from starcom.ledger import EventLedger
 from starcom.red_team import C6RedTeamService
-from starcom.trust import AuthorizationRequest, PolicyEffect, PolicyRule, TrustPlane
+from starcom.trust import AuthorizationRequest, PolicyEffect, PolicyRule
+from test_execution_plan import PUBLIC_KEY, T3, T4, PlanGraph, RecordingSignatureVerifier
 
 
-T0 = "2026-08-20T12:00:00.000000Z"
-T1 = "2026-08-20T12:01:00.000000Z"
-T2 = "2026-08-20T12:02:00.000000Z"
-T3 = "2026-08-20T12:03:00.000000Z"
-T4 = "2026-08-20T12:04:00.000000Z"
 T5 = "2026-08-20T12:05:00.000000Z"
 T6 = "2026-08-20T12:06:00.000000Z"
-PUBLIC_KEY = b"c6-red-team-public-key"
+C6_PUBLIC_KEY = b"c6-red-team-public-key"
 
 
-class RecordingSignatureVerifier:
+class C6RecordingSignatureVerifier(RecordingSignatureVerifier):
     def validate_public_key(self, public_key_pem: bytes) -> bool:
-        return public_key_pem == PUBLIC_KEY
-
-    @staticmethod
-    def sign(public_key_pem: bytes, payload: bytes) -> bytes:
-        return hashlib.sha256(public_key_pem + payload).digest()
-
-    def verify(self, public_key_pem: bytes, payload: bytes, signature: bytes) -> bool:
-        return signature == self.sign(public_key_pem, payload)
-
-
-class FakeExecutionPlan:
-    def __init__(self, database: Database, ledger: EventLedger) -> None:
-        self.database = database
-        self.ledger = ledger
-        self.clean = True
-        c5_payload = canonical_json(
-            {"plan_id": "plan-1", "architecture_id": "starcom-v3.2-baseline"}
-        ).encode("utf-8")
-        receipt = ledger.append(
-            "continuity:c5:execution-plan:plan-1",
-            "C5_EXECUTION_PLAN_ADMITTED",
-            {
-                "plan_id": "plan-1",
-                "architecture_id": "starcom-v3.2-baseline",
-                "payload_sha256": hashlib.sha256(c5_payload).hexdigest(),
-            },
-            actor="c5-admitter",
-            event_id="c5-event-1",
-            occurred_at=T4,
-        )
-        self.plan = SimpleNamespace(
-            plan_id="plan-1",
-            architecture_id="starcom-v3.2-baseline",
-            plan_version="1.0.0",
-            architecture_version="3.2.0",
-            payload=c5_payload,
-            payload_sha256=hashlib.sha256(c5_payload).hexdigest(),
-            admitted_at=T4,
-            admitted_by="c5-admitter",
-            planner_identity="c5-planner",
-            reviewer_identity="c5-reviewer",
-            ledger_event_id=receipt.event_id,
-            ledger_hash=receipt.record_hash,
-            independence_basis={
-                "excluded_identities": ["c3-actor", "c4-actor"],
-                "statement": "C5 actors are independent from upstream material actors",
-            },
-        )
-        self.work_items = (
-            {
-                "work_item_id": "item-1",
-                "phase": "assessment",
-                "title": "Freeze the C5 plan",
-                "owner_role": "c5-owner",
-                "dependencies": [],
-            },
-        )
-        self.release_gates = (
-            {
-                "gate_id": "gate-1",
-                "title": "C5 proof gate",
-                "required_work_item_ids": ["item-1"],
-            },
-        )
-
-    def get_plan(self, plan_id: str):
-        if plan_id != self.plan.plan_id:
-            raise KeyError(plan_id)
-        return self.plan
-
-    def verify_plan(self, plan_id: str):
-        if not self.clean:
-            return SimpleNamespace(plan_id=plan_id, defects=("PLAN_TAMPERED",), ok=False)
-        return SimpleNamespace(plan_id=plan_id, defects=(), ok=True)
-
-    def get_work_items(self, plan_id: str):
-        self.get_plan(plan_id)
-        return self.work_items
-
-    def get_release_gates(self, plan_id: str):
-        self.get_plan(plan_id)
-        return self.release_gates
-
-    def snapshot(self, plan_id: str):
-        self.get_plan(plan_id)
-        return SimpleNamespace(snapshot_digest="c5-upstream-snapshot")
+        return public_key_pem in {PUBLIC_KEY, C6_PUBLIC_KEY}
 
 
 class RedTeamGraph:
     def __init__(self, root: Path) -> None:
-        self.database = Database(root / "red-team.sqlite3")
-        self.database.initialize()
-        self.ledger = EventLedger(self.database)
-        self.trust = TrustPlane(self.database, self.ledger)
-        self.verifier = RecordingSignatureVerifier()
+        self.base = PlanGraph(root)
+        self.database = self.base.database
+        self.ledger = self.base.ledger
+        self.trust = self.base.trust
+        self.verifier = C6RecordingSignatureVerifier()
         self.continuity = ContinuityService(
             self.database, self.ledger, self.trust, self.verifier
         )
-        self.execution_plan = FakeExecutionPlan(self.database, self.ledger)
+        self.execution_plan = self.base.service
+        self.architecture = self.base.architecture
+        self.base.accept_root()
+        c5_payload = self.base.payload()
+        self.execution_plan.admit_plan(
+            "starcom-v3.2-baseline",
+            "c5-root",
+            c5_payload,
+            self.verifier.sign(PUBLIC_KEY, c5_payload),
+            actor="plan-admitter",
+            occurred_at=T4,
+        )
         self.service = C6RedTeamService(
             self.database,
             self.ledger,
@@ -137,7 +55,7 @@ class RedTeamGraph:
         )
 
     def close(self) -> None:
-        self.database.close()
+        self.base.close()
 
     def accept_root(self) -> None:
         self.trust.add_rule(
@@ -149,7 +67,7 @@ class RedTeamGraph:
                 "continuity:trust-root:c6-root",
             ),
             actor="policy-owner",
-            occurred_at=T0,
+            occurred_at="2026-08-20T12:00:00.000000Z",
         )
         decision = self.trust.authorize(
             AuthorizationRequest(
@@ -157,14 +75,14 @@ class RedTeamGraph:
                 "continuity.trust-root.accept",
                 "continuity:trust-root:c6-root",
             ),
-            now=T1,
+            now="2026-08-20T12:01:00.000000Z",
         )
         self.continuity.accept_trust_root(
             "c6-root",
-            PUBLIC_KEY,
+            C6_PUBLIC_KEY,
             decision_id=decision.decision_id,
             actor="c6-root-operator",
-            occurred_at=T1,
+            occurred_at="2026-08-20T12:01:00.000000Z",
         )
 
     @staticmethod
@@ -301,20 +219,34 @@ class C6RedTeamTests(unittest.TestCase):
         self.assertEqual(count, 0)
 
     def test_c5_binding_chronology_independence_and_verdict_fail_closed(self) -> None:
-        self.graph.execution_plan.clean = False
+        self.graph.architecture.clean = False
         with self.assertRaises(IntegrityError):
             self.graph.service.snapshot("plan-1")
-        self.graph.execution_plan.clean = True
-        original_payload_sha256 = self.graph.execution_plan.plan.payload_sha256
-        self.graph.execution_plan.plan.payload_sha256 = "f" * 64
+        self.graph.architecture.clean = True
+        self.graph.database.connection.execute(
+            "DROP TRIGGER c5_execution_plans_no_update"
+        )
+        original_plan = self.graph.execution_plan.get_plan("plan-1")
+        self.graph.database.connection.execute(
+            "UPDATE c5_execution_plans SET payload_sha256 = ? WHERE plan_id = ?",
+            ("f" * 64, "plan-1"),
+        )
         with self.assertRaises(IntegrityError):
             self.graph.service.snapshot("plan-1")
-        self.graph.execution_plan.plan.payload_sha256 = original_payload_sha256
-        original_ledger_hash = self.graph.execution_plan.plan.ledger_hash
-        self.graph.execution_plan.plan.ledger_hash = "e" * 64
+        self.graph.database.connection.execute(
+            "UPDATE c5_execution_plans SET payload_sha256 = ? WHERE plan_id = ?",
+            (original_plan.payload_sha256, "plan-1"),
+        )
+        self.graph.database.connection.execute(
+            "UPDATE c5_execution_plans SET ledger_hash = ? WHERE plan_id = ?",
+            ("e" * 64, "plan-1"),
+        )
         with self.assertRaises(IntegrityError):
             self.graph.service.snapshot("plan-1")
-        self.graph.execution_plan.plan.ledger_hash = original_ledger_hash
+        self.graph.database.connection.execute(
+            "UPDATE c5_execution_plans SET ledger_hash = ? WHERE plan_id = ?",
+            (original_plan.ledger_hash, "plan-1"),
+        )
         for overrides in (
             {"assessor_identity": "c5-planner"},
             {"adjudicator_identity": "c5-reviewer"},
@@ -351,7 +283,7 @@ class C6RedTeamTests(unittest.TestCase):
             "plan-1",
             "c6-root",
             failed_payload,
-            self.graph.verifier.sign(PUBLIC_KEY, failed_payload),
+            self.graph.verifier.sign(C6_PUBLIC_KEY, failed_payload),
             actor="c6-admitter",
             occurred_at=T6,
         )
@@ -373,7 +305,7 @@ class C6RedTeamTests(unittest.TestCase):
                 "plan-1",
                 "c6-root",
                 blocked_payload,
-                blocked_graph.verifier.sign(PUBLIC_KEY, blocked_payload),
+                blocked_graph.verifier.sign(C6_PUBLIC_KEY, blocked_payload),
                 actor="c6-admitter",
                 occurred_at=T6,
             )
@@ -386,7 +318,7 @@ class C6RedTeamTests(unittest.TestCase):
 
     def test_exact_admission_replay_and_conflict(self) -> None:
         payload = self.graph.payload()
-        signature = self.graph.verifier.sign(PUBLIC_KEY, payload)
+        signature = self.graph.verifier.sign(C6_PUBLIC_KEY, payload)
         with self.assertRaises(IntegrityError):
             self.graph.service.admit_assessment(
                 "plan-1",
@@ -427,7 +359,7 @@ class C6RedTeamTests(unittest.TestCase):
                 "plan-1",
                 "c6-root",
                 conflict_payload,
-                self.graph.verifier.sign(PUBLIC_KEY, conflict_payload),
+                self.graph.verifier.sign(C6_PUBLIC_KEY, conflict_payload),
                 actor="c6-admitter",
                 occurred_at=T6,
             )
@@ -448,7 +380,7 @@ class C6RedTeamTests(unittest.TestCase):
             "plan-1",
             "c6-root",
             payload,
-            self.graph.verifier.sign(PUBLIC_KEY, payload),
+            self.graph.verifier.sign(C6_PUBLIC_KEY, payload),
             actor="c6-admitter",
             occurred_at=T6,
         )
@@ -488,7 +420,7 @@ class C6RedTeamTests(unittest.TestCase):
         self.assertFalse(verification.ok)
         self.assertIn("ASSESSMENT_LEDGER_KIND_MISMATCH", verification.defects)
 
-        self.graph.execution_plan.clean = False
+        self.graph.architecture.clean = False
         verification = self.graph.service.verify_assessment(plan.assessment_id)
         self.assertFalse(verification.ok)
         self.assertIn("ASSESSMENT_C5_SNAPSHOT_INVALID", verification.defects)
