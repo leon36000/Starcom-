@@ -25,6 +25,7 @@ from .continuity import ContinuityService
 from .db import Database
 from .durable import DurableOutbox
 from .errors import StarcomError, ValidationError
+from .execution_plan import C5ExecutionPlanService
 from .executor_registry import C3ExecutorRegistry
 from .ledger import EventLedger
 from .mission import MissionKernel, MissionState
@@ -76,10 +77,15 @@ class Runtime:
     architecture_review: C4ArchitectureReviewService
     architecture_publication: C4ArchitecturePublicationService
     architecture: C4ArchitectureService
+    execution_plan: C5ExecutionPlanService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
         return self.architecture
+
+    @property
+    def c5_execution_plan(self) -> C5ExecutionPlanService:
+        return self.execution_plan
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -179,6 +185,13 @@ class Runtime:
                 adoption,
                 adoption_execution,
             )
+            execution_plan = C5ExecutionPlanService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                architecture,
+            )
             return cls(
                 database,
                 ledger,
@@ -202,6 +215,7 @@ class Runtime:
                 architecture_review,
                 architecture_publication,
                 architecture,
+                execution_plan,
             )
         except BaseException:
             database.close()
