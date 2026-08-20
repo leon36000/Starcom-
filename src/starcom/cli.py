@@ -34,6 +34,7 @@ from .qualification import QualificationArtifactKind, QualificationLab
 from .qualification_decision import C3DecisionService
 from .qualification_gate import C3QualificationGate
 from .recollection import C2RecollectionService
+from .red_team import C6RedTeamService
 from .research import ReceiptOutcome, ResearchCampaign
 from .trust import (
     AuthorizationRequest,
@@ -78,6 +79,7 @@ class Runtime:
     architecture_publication: C4ArchitecturePublicationService
     architecture: C4ArchitectureService
     execution_plan: C5ExecutionPlanService
+    red_team: C6RedTeamService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
@@ -86,6 +88,10 @@ class Runtime:
     @property
     def c5_execution_plan(self) -> C5ExecutionPlanService:
         return self.execution_plan
+
+    @property
+    def c6_red_team(self) -> C6RedTeamService:
+        return self.red_team
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -192,6 +198,13 @@ class Runtime:
                 continuity,
                 architecture,
             )
+            red_team = C6RedTeamService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                execution_plan,
+            )
             return cls(
                 database,
                 ledger,
@@ -216,6 +229,7 @@ class Runtime:
                 architecture_publication,
                 architecture,
                 execution_plan,
+                red_team,
             )
         except BaseException:
             database.close()
