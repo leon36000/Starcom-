@@ -8,7 +8,7 @@ import re
 import sqlite3
 from typing import Any, Mapping
 
-from .canonical import canonical_json, sha256_digest, utc_now
+from .canonical import canonical_json, parse_strict_json_object, sha256_digest, utc_now
 from .continuity_crypto import OpenSSLEd25519Verifier
 from .errors import ConflictError, IntegrityError, NotFoundError, StateTransitionError, ValidationError
 
@@ -252,29 +252,11 @@ class C5ExecutionPlanService:
 
     @classmethod
     def _parse_payload(cls, payload: bytes) -> dict[str, object]:
-        if not isinstance(payload, bytes) or not payload or len(payload) > _MAX_PAYLOAD_BYTES:
-            raise ValidationError("payload must be non-empty bytes within the size limit")
-
-        def no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
-            result: dict[str, object] = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError(f"duplicate key: {key}")
-                result[key] = value
-            return result
-
-        try:
-            value = json.loads(
-                payload.decode("utf-8"),
-                object_pairs_hook=no_duplicates,
-                parse_constant=lambda _: (_ for _ in ()).throw(
-                    ValueError("invalid JSON constant")
-                ),
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise ValidationError("C5 execution plan payload must be strict UTF-8 JSON") from exc
-        if not isinstance(value, dict):
-            raise ValidationError("C5 execution plan payload must be a JSON object")
+        value = parse_strict_json_object(
+            payload,
+            max_bytes=_MAX_PAYLOAD_BYTES,
+            label="C5 execution plan",
+        )
         fields = frozenset(value)
         if fields != _REQUIRED_FIELDS:
             raise ValidationError(

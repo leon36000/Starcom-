@@ -27,6 +27,7 @@ from .durable import DurableOutbox
 from .errors import StarcomError, ValidationError
 from .execution_plan import C5ExecutionPlanService
 from .executor_registry import C3ExecutorRegistry
+from .final_pack import C7FinalPackService
 from .ledger import EventLedger
 from .mission import MissionKernel, MissionState
 from .proof import ProofEngine, VerificationVerdict
@@ -80,6 +81,7 @@ class Runtime:
     architecture: C4ArchitectureService
     execution_plan: C5ExecutionPlanService
     red_team: C6RedTeamService
+    final_pack: C7FinalPackService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
@@ -92,6 +94,10 @@ class Runtime:
     @property
     def c6_red_team(self) -> C6RedTeamService:
         return self.red_team
+
+    @property
+    def c7_final_pack(self) -> C7FinalPackService:
+        return self.final_pack
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -205,6 +211,15 @@ class Runtime:
                 continuity,
                 execution_plan,
             )
+            final_pack = C7FinalPackService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                architecture,
+                execution_plan,
+                red_team,
+            )
             return cls(
                 database,
                 ledger,
@@ -230,6 +245,7 @@ class Runtime:
                 architecture,
                 execution_plan,
                 red_team,
+                final_pack,
             )
         except BaseException:
             database.close()
