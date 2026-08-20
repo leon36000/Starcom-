@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
-import re
 import sqlite3
 from typing import Any, Mapping
 
 from .canonical import canonical_json, sha256_digest, utc_now
 from .continuity_crypto import OpenSSLEd25519Verifier
 from .errors import ConflictError, IntegrityError, NotFoundError, StateTransitionError, ValidationError
+from .execution_plan import C5ExecutionPlanService
 
 
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 _MAX_SIGNATURE_BYTES = 1024
 _GATE_EFFECT = "C6_RED_TEAM_ASSESSMENT_ADMITTED_NO_RELEASE"
@@ -78,6 +76,12 @@ _FINDING_FIELDS = frozenset(
         "remediation_work_item_id",
     }
 )
+
+_TEXT = C5ExecutionPlanService._text
+_DIGEST = C5ExecutionPlanService._digest
+_TIMESTAMP = C5ExecutionPlanService._timestamp
+_DT = C5ExecutionPlanService._dt
+_SORTED_STRINGS = C5ExecutionPlanService._sorted_strings
 
 
 @dataclass(frozen=True)
@@ -160,6 +164,12 @@ class C6RedTeamAssessmentVerification:
 class C6RedTeamService:
     """Exact-byte C6 red-team authority; assessment never repairs or releases."""
 
+    _text = staticmethod(_TEXT)
+    _digest = staticmethod(_DIGEST)
+    _timestamp = staticmethod(_TIMESTAMP)
+    _dt = staticmethod(_DT)
+    _sorted_strings = staticmethod(_SORTED_STRINGS)
+
     def __init__(
         self,
         database: Any,
@@ -206,51 +216,6 @@ class C6RedTeamService:
             (value for value in values if value is not None and predicate(value)),
             None,
         )
-
-    @staticmethod
-    def _text(value: object, field: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValidationError(f"{field} must be a non-empty string")
-        return value
-
-    @classmethod
-    def _digest(cls, value: object, field: str) -> str:
-        value = cls._text(value, field)
-        if not _SHA256.fullmatch(value):
-            raise ValidationError(f"{field} must be a lowercase SHA-256 digest")
-        return value
-
-    @classmethod
-    def _timestamp(cls, value: object, field: str) -> str:
-        value = cls._text(value, field)
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValidationError(f"{field} must be RFC 3339") from exc
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValidationError(f"{field} must be timezone-aware")
-        return value
-
-    @staticmethod
-    def _dt(value: str) -> datetime:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-    @classmethod
-    def _sorted_strings(
-        cls,
-        value: object,
-        field: str,
-        *,
-        allow_empty: bool,
-    ) -> list[str]:
-        if not isinstance(value, list):
-            raise ValidationError(f"{field} must be a list")
-        if not allow_empty and not value:
-            raise ValidationError(f"{field} must not be empty")
-        result = [cls._text(item, f"{field}[]") for item in value]
-        if result != sorted(result) or len(set(result)) != len(result):
-            raise ValidationError(f"{field} must be sorted and unique")
-        return result
 
     @classmethod
     def _parse_payload(cls, payload: bytes) -> dict[str, object]:
