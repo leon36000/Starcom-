@@ -388,54 +388,79 @@ class DurableOutbox:
         occurred_at = occurred_at or utc_now()
         self._parse_time(occurred_at)
         with self.database.transaction() as connection:
-            row = connection.execute(
-                "SELECT * FROM durable_effects WHERE effect_id = ?",
-                (effect_id,),
-            ).fetchone()
-            if row is None:
-                raise NotFoundError("effect does not exist", {"effect_id": effect_id})
-            self._require_lease(
-                row,
+            return self.succeed_in_transaction(
+                connection,
+                effect_id=effect_id,
                 worker_id=worker_id,
                 lease_token=lease_token,
+                result_digest=result_digest,
                 occurred_at=occurred_at,
             )
-            receipt = self.ledger.append_in_transaction(
-                connection,
-                f"durable:effect:{effect_id}",
-                "EFFECT_SUCCEEDED",
-                {
-                    "effect_id": effect_id,
-                    "worker_id": worker_id,
-                    "attempt_count": int(row["attempt_count"]),
-                    "result_digest": result_digest,
-                },
-                actor=worker_id,
-                occurred_at=occurred_at,
-            )
-            connection.execute(
-                """
-                UPDATE durable_effects
-                SET status = ?, result_digest = ?, lease_owner = NULL,
-                    lease_token = NULL, lease_expires_at = NULL,
-                    updated_at = ?, ledger_event_id = ?, ledger_hash = ?
-                WHERE effect_id = ?
-                """,
-                (
-                    EffectStatus.SUCCEEDED.value,
-                    result_digest,
-                    occurred_at,
-                    receipt.event_id,
-                    receipt.record_hash,
-                    effect_id,
-                ),
-            )
-            updated = connection.execute(
-                "SELECT * FROM durable_effects WHERE effect_id = ?",
-                (effect_id,),
-            ).fetchone()
-            assert updated is not None
-            return self._row_to_record(updated)
+
+    def succeed_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        effect_id: str,
+        worker_id: str,
+        lease_token: str,
+        result_digest: str,
+        occurred_at: str,
+    ) -> EffectRecord:
+        """Mark a leased effect successful inside a caller-owned transaction."""
+        effect_id = self._required_text(effect_id, "effect_id")
+        worker_id = self._required_text(worker_id, "worker_id")
+        lease_token = self._required_text(lease_token, "lease_token")
+        result_digest = self._validate_digest(result_digest)
+        self._parse_time(occurred_at)
+        row = connection.execute(
+            "SELECT * FROM durable_effects WHERE effect_id = ?",
+            (effect_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError("effect does not exist", {"effect_id": effect_id})
+        self._require_lease(
+            row,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            occurred_at=occurred_at,
+        )
+        receipt = self.ledger.append_in_transaction(
+            connection,
+            f"durable:effect:{effect_id}",
+            "EFFECT_SUCCEEDED",
+            {
+                "effect_id": effect_id,
+                "worker_id": worker_id,
+                "attempt_count": int(row["attempt_count"]),
+                "result_digest": result_digest,
+            },
+            actor=worker_id,
+            occurred_at=occurred_at,
+        )
+        connection.execute(
+            """
+            UPDATE durable_effects
+            SET status = ?, result_digest = ?, lease_owner = NULL,
+                lease_token = NULL, lease_expires_at = NULL,
+                updated_at = ?, ledger_event_id = ?, ledger_hash = ?
+            WHERE effect_id = ?
+            """,
+            (
+                EffectStatus.SUCCEEDED.value,
+                result_digest,
+                occurred_at,
+                receipt.event_id,
+                receipt.record_hash,
+                effect_id,
+            ),
+        )
+        updated = connection.execute(
+            "SELECT * FROM durable_effects WHERE effect_id = ?",
+            (effect_id,),
+        ).fetchone()
+        assert updated is not None
+        return self._row_to_record(updated)
 
     def fail(
         self,

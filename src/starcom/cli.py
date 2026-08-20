@@ -37,6 +37,7 @@ from .qualification_gate import C3QualificationGate
 from .recollection import C2RecollectionService
 from .red_team import C6RedTeamService
 from .research import ReceiptOutcome, ResearchCampaign
+from .research_marathon import ResearchMarathonService
 from .trust import (
     AuthorizationRequest,
     PolicyEffect,
@@ -82,6 +83,7 @@ class Runtime:
     execution_plan: C5ExecutionPlanService
     red_team: C6RedTeamService
     final_pack: C7FinalPackService
+    research_marathon: ResearchMarathonService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
@@ -220,6 +222,15 @@ class Runtime:
                 execution_plan,
                 red_team,
             )
+            research_marathon = ResearchMarathonService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                final_pack,
+                research,
+                outbox,
+            )
             return cls(
                 database,
                 ledger,
@@ -246,6 +257,7 @@ class Runtime:
                 execution_plan,
                 red_team,
                 final_pack,
+                research_marathon,
             )
         except BaseException:
             database.close()
