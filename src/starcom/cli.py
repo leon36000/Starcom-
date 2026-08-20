@@ -13,6 +13,9 @@ from typing import Any
 from . import __version__
 from .adoption import C3AdoptionService
 from .adoption_execution import C3AdoptionExecutionService
+from .architecture_candidate import C4ArchitectureCandidateService
+from .architecture_input import C4ArchitectureInputService
+from .architecture_review import C4ArchitectureReviewService
 from .canonical import canonical_json
 from .census import C2CensusService
 from .certification import C2CertificationService
@@ -66,6 +69,9 @@ class Runtime:
     outbox: DurableOutbox
     adoption_execution: C3AdoptionExecutionService
     executor_registry: C3ExecutorRegistry
+    architecture_input: C4ArchitectureInputService
+    architecture_candidate: C4ArchitectureCandidateService
+    architecture_review: C4ArchitectureReviewService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -125,6 +131,28 @@ class Runtime:
                 trust,
                 continuity,
             )
+            architecture_input = C4ArchitectureInputService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                adoption_execution,
+            )
+            architecture_candidate = C4ArchitectureCandidateService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                architecture_input,
+            )
+            architecture_review = C4ArchitectureReviewService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                architecture_input,
+                architecture_candidate,
+            )
             return cls(
                 database,
                 ledger,
@@ -143,6 +171,9 @@ class Runtime:
                 outbox,
                 adoption_execution,
                 executor_registry,
+                architecture_input,
+                architecture_candidate,
+                architecture_review,
             )
         except BaseException:
             database.close()
@@ -568,6 +599,90 @@ def _c3_decision_verify(
     runtime: Runtime, args: argparse.Namespace
 ) -> tuple[Any, int]:
     verification = runtime.c3_decision.verify_decision(args.decision_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _architecture_reviewer_root_result(value: Any) -> dict[str, Any]:
+    result = asdict(value)
+    result.pop("public_key_pem", None)
+    return result
+
+
+def _architecture_review_result(
+    runtime: Runtime,
+    review: Any,
+) -> dict[str, Any]:
+    result = asdict(review)
+    result.pop("payload", None)
+    result.pop("signature", None)
+    result["verdict"] = review.verdict.value
+    result["findings"] = [
+        asdict(finding)
+        for finding in runtime.architecture_review.get_findings(review.review_id)
+    ]
+    return result
+
+
+def _architecture_review_prepare_root(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    public_key = _read_file_bytes(args.public_key_file, "public_key_file")
+    return runtime.architecture_review.prepare_reviewer_root(
+        args.key_id,
+        args.reviewer_identity,
+        public_key,
+    ), 0
+
+
+def _architecture_review_accept_root(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    public_key = _read_file_bytes(args.public_key_file, "public_key_file")
+    root = runtime.architecture_review.accept_reviewer_root(
+        args.key_id,
+        args.reviewer_identity,
+        public_key,
+        authorization_decision_id=args.authorization_decision_id,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    )
+    return _architecture_reviewer_root_result(root), 0
+
+
+def _architecture_review_admit(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    payload = _read_file_bytes(args.payload_file, "payload_file")
+    signature = _read_file_bytes(args.signature_file, "signature_file")
+    review = runtime.architecture_review.admit_review(
+        args.candidate_id,
+        args.key_id,
+        payload,
+        signature,
+        actor=args.actor,
+        occurred_at=args.occurred_at,
+    )
+    return _architecture_review_result(runtime, review), 0
+
+
+def _architecture_review_get(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    review = runtime.architecture_review.get_review(args.review_id)
+    return _architecture_review_result(runtime, review), 0
+
+
+def _architecture_review_verify_root(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    verification = runtime.architecture_review.verify_reviewer_root(args.key_id)
+    return _verification_payload(verification), 0 if verification.ok else 3
+
+
+def _architecture_review_verify(
+    runtime: Runtime, args: argparse.Namespace
+) -> tuple[Any, int]:
+    verification = runtime.architecture_review.verify_review(args.review_id)
     return _verification_payload(verification), 0 if verification.ok else 3
 
 
@@ -1224,6 +1339,76 @@ def build_parser() -> argparse.ArgumentParser:
     c3_decision_verify = c3_decision_commands.add_parser("verify")
     c3_decision_verify.add_argument("--decision-id", required=True)
     _set_handler(c3_decision_verify, _c3_decision_verify)
+
+    architecture_review = top.add_parser(
+        "architecture-review",
+        help="operate the exact-byte non-publishing C4 architecture review",
+    )
+    architecture_review_commands = architecture_review.add_subparsers(
+        dest="architecture_review_command",
+        required=True,
+    )
+
+    architecture_review_prepare_root = architecture_review_commands.add_parser(
+        "prepare-reviewer-root"
+    )
+    architecture_review_prepare_root.add_argument("--key-id", required=True)
+    architecture_review_prepare_root.add_argument(
+        "--reviewer-identity", required=True
+    )
+    architecture_review_prepare_root.add_argument(
+        "--public-key-file", required=True
+    )
+    _set_handler(
+        architecture_review_prepare_root,
+        _architecture_review_prepare_root,
+    )
+
+    architecture_review_accept_root = architecture_review_commands.add_parser(
+        "accept-reviewer-root"
+    )
+    architecture_review_accept_root.add_argument("--key-id", required=True)
+    architecture_review_accept_root.add_argument(
+        "--reviewer-identity", required=True
+    )
+    architecture_review_accept_root.add_argument(
+        "--public-key-file", required=True
+    )
+    architecture_review_accept_root.add_argument(
+        "--authorization-decision-id", required=True
+    )
+    architecture_review_accept_root.add_argument("--actor", required=True)
+    _add_occurred_at(architecture_review_accept_root)
+    _set_handler(
+        architecture_review_accept_root,
+        _architecture_review_accept_root,
+    )
+
+    architecture_review_admit = architecture_review_commands.add_parser("admit")
+    architecture_review_admit.add_argument("--candidate-id", required=True)
+    architecture_review_admit.add_argument("--key-id", required=True)
+    architecture_review_admit.add_argument("--payload-file", required=True)
+    architecture_review_admit.add_argument("--signature-file", required=True)
+    architecture_review_admit.add_argument("--actor", required=True)
+    _add_occurred_at(architecture_review_admit)
+    _set_handler(architecture_review_admit, _architecture_review_admit)
+
+    architecture_review_get = architecture_review_commands.add_parser("get")
+    architecture_review_get.add_argument("--review-id", required=True)
+    _set_handler(architecture_review_get, _architecture_review_get)
+
+    architecture_review_verify_root = architecture_review_commands.add_parser(
+        "verify-root"
+    )
+    architecture_review_verify_root.add_argument("--key-id", required=True)
+    _set_handler(
+        architecture_review_verify_root,
+        _architecture_review_verify_root,
+    )
+
+    architecture_review_verify = architecture_review_commands.add_parser("verify")
+    architecture_review_verify.add_argument("--review-id", required=True)
+    _set_handler(architecture_review_verify, _architecture_review_verify)
 
     adoption = top.add_parser(
         "adoption",
