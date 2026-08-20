@@ -15,6 +15,7 @@ from .adoption import C3AdoptionService
 from .adoption_execution import C3AdoptionExecutionService
 from .architecture_candidate import C4ArchitectureCandidateService
 from .architecture_input import C4ArchitectureInputService
+from .architecture_publication import C4ArchitecturePublicationService
 from .architecture_review import C4ArchitectureReviewService
 from .canonical import canonical_json
 from .census import C2CensusService
@@ -72,6 +73,7 @@ class Runtime:
     architecture_input: C4ArchitectureInputService
     architecture_candidate: C4ArchitectureCandidateService
     architecture_review: C4ArchitectureReviewService
+    architecture_publication: C4ArchitecturePublicationService
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -153,6 +155,15 @@ class Runtime:
                 architecture_input,
                 architecture_candidate,
             )
+            architecture_publication = C4ArchitecturePublicationService(
+                database,
+                ledger,
+                trust,
+                continuity,
+                architecture_input,
+                architecture_candidate,
+                architecture_review,
+            )
             return cls(
                 database,
                 ledger,
@@ -174,6 +185,7 @@ class Runtime:
                 architecture_input,
                 architecture_candidate,
                 architecture_review,
+                architecture_publication,
             )
         except BaseException:
             database.close()
