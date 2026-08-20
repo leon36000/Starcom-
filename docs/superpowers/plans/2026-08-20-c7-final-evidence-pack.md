@@ -39,10 +39,10 @@
 - Produce `C7FinalPackService`, `C7FinalPackSnapshot`, and `C7FinalPackVerification` names required by later tasks.
 
 - [x] Write the design/spec and plan with exact fields, constants, manifest kinds, chronology, provenance, and truth boundary.
-- [ ] Write a `FinalPackGraph` wrapper that admits a PASS C6 assessment at `T6`, builds a signed C7 payload at `T7`, and owns a separate C7 verifier/root key.
-- [ ] Add failing tests for deterministic snapshot, strict import surface, and `ModuleNotFoundError` before production implementation.
-- [ ] Run `PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_final_pack.py' -q` and record the expected RED failure.
-- [ ] Commit only the design, plan, and RED test surface.
+- [x] Write a `FinalPackGraph` wrapper that admits a PASS C6 assessment at `T6`, builds a signed C7 payload at `T7`, and owns a separate C7 verifier/root key.
+- [x] Add failing tests for deterministic snapshot, strict import surface, and `ModuleNotFoundError` before production implementation.
+- [x] Run `PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_final_pack.py' -q` and record the expected RED failure.
+- [x] Commit the design, plan, and RED test surface (`b7a70f9`, `43f71ed`).
 
 ### Task 2: Implement strict parser and immutable pack/manifest schema
 
@@ -56,10 +56,10 @@
 - `C7FinalPackService.prepare(pack_id, assessment_id, payload=None) -> C7FinalPackPreparation`.
 - `C7FinalPackService.admit_pack(assessment_id, key_id, payload, signature, *, actor, occurred_at=None) -> C7FinalPack`.
 
-- [ ] Add tests for duplicate keys, invalid UTF-8/constants, missing/extra fields, fixed-status violations, malformed manifest entries, duplicate IDs/kinds, unsorted entries, missing mandatory kinds, invalid digests, and wrong top-level/manifest digest associations.
-- [ ] Implement exact JSON parsing while reusing the existing C5 validation helpers to avoid duplicated production validation logic.
-- [ ] Create `c7_final_packs` and `c7_final_pack_manifest` with exact digest checks, uniqueness constraints, foreign keys, and update/delete triggers.
-- [ ] Run parser/schema tests and assert rejected payloads create no C7 rows.
+- [x] Add tests for duplicate keys, invalid UTF-8/constants, missing/extra fields, fixed-status violations, malformed manifest entries, duplicate IDs/kinds, unsorted entries, missing mandatory kinds, invalid digests, and wrong top-level/manifest digest associations.
+- [x] Implement exact JSON parsing while reusing the existing C5 validation helpers to avoid duplicated production validation logic.
+- [x] Create `c7_final_packs` and `c7_final_pack_manifest` with exact digest checks, uniqueness constraints, foreign keys, and update/delete triggers.
+- [x] Run parser/schema tests and assert rejected payloads create no C7 rows.
 
 ### Task 3: Implement clean C4/C5/C6 chain snapshot and chronology
 
@@ -71,10 +71,10 @@
 - `snapshot(assessment_id)` returns the current C4/C5/C6 identifiers, payload digests, snapshot digests, C3 digest, provenance digest, latest evidence timestamp, identity exclusion tuple, and `chain_snapshot_digest`.
 - `verify_pack` treats any changed upstream snapshot or C6 verdict as stale.
 
-- [ ] Add tests for absent/dirty C4, absent/dirty C5, absent/dirty/non-PASS C6, C4/C5/C6 binding mismatches, upstream identity reuse, and pre-evidence packaging timestamps.
-- [ ] Implement C4 baseline and snapshot verification, C5 plan and C6-bound snapshot verification, and C6 PASS/recommendation checks.
-- [ ] Implement deterministic provenance and chain snapshot digests, latest-evidence max calculation, and exact upstream identity exclusion.
-- [ ] Run the chain/chronology tests green.
+- [x] Add tests for absent/dirty C4, absent/dirty C5, absent/dirty/non-PASS C6, C4/C5/C6 binding mismatches, upstream identity reuse, and pre-evidence packaging timestamps.
+- [x] Implement C4 baseline and snapshot verification, C5 plan and C6-bound snapshot verification, and C6 PASS/recommendation checks.
+- [x] Implement deterministic provenance and chain snapshot digests, latest-evidence max calculation, and exact upstream identity exclusion.
+- [x] Run the chain/chronology tests green.
 
 ### Task 4: Implement exact-byte admission, replay, manifest persistence, and ledger
 
@@ -86,9 +86,9 @@
 - Admission persists exact payload/signature bytes and ordered manifest rows, then appends `C7_FINAL_PACK_ADMITTED` on `continuity:c7:final-pack:<pack_id>`.
 - `get_pack(pack_id) -> C7FinalPack` and `get_manifest(pack_id) -> tuple[Mapping[str, object], ...]` return stored material without mutation.
 
-- [ ] Add tests for default-deny C7 root, exact signature bytes, admission, exact replay with one event, second pack conflict, changed bytes/key/signature/actor conflicts, and in-transaction upstream revalidation.
-- [ ] Implement bounded bytes, signature verification, conflict detection, atomic pack/manifest/event insertion, and admission-time chronology.
-- [ ] Run admission/replay tests green and assert one immutable pack and one ledger event for exact replay.
+- [x] Add tests for default-deny C7 root, exact signature bytes, admission, exact replay with one event, second pack conflict, changed bytes/key/signature/actor conflicts, and in-transaction upstream revalidation.
+- [x] Implement bounded bytes, signature verification, conflict detection, atomic pack/manifest/event insertion, and admission-time chronology.
+- [x] Run admission/replay tests green and assert one immutable pack and one ledger event for exact replay.
 
 ### Task 5: Implement independent verifier and Runtime wiring
 
@@ -101,10 +101,10 @@
 - `verify_pack(pack_id) -> C7FinalPackVerification`, with aliases `verify` and `verify_final_pack`.
 - Runtime contains one `final_pack: C7FinalPackService`; property `c7_final_pack` returns the same object.
 
-- [ ] Add tamper tests for pack rows, manifest rows/digests/order, payload/signature digests, ledger event/chain, C4/C5/C6 evolution, and invalid fixed statuses.
-- [ ] Implement independent reconstruction of payload, manifest digest bindings, upstream chain, signature, immutable members, and provenance.
-- [ ] Add Runtime identity/surface tests ensuring no forbidden release/publish/deploy/execute/promote method exists and no CLI mutation command is exposed.
-- [ ] Run focused C7 tests and existing smoke/CLI regressions.
+- [x] Add tamper tests for pack rows, manifest rows/digests/order, payload/signature digests, ledger event/chain, C4/C5/C6 evolution, and invalid fixed statuses.
+- [x] Implement independent reconstruction of payload, manifest digest bindings, upstream chain, signature, immutable members, and provenance.
+- [x] Add Runtime identity/surface tests ensuring no forbidden release/publish/deploy/execute/promote method exists and no CLI mutation command is exposed.
+- [x] Run focused C7 tests and existing smoke/CLI regressions.
 
 ### Task 6: Manifest, repository evidence, and integration
 
@@ -113,9 +113,9 @@
 - Modify: `docs/superpowers/plans/2026-08-20-c7-final-evidence-pack.md`
 - Inspect: all C7 changed files and final diff.
 
-- [ ] Regenerate the manifest and run `git diff --check`.
-- [ ] Run the complete deterministic gate with `PYTHONHASHSEED=0 PYTHONWARNINGS=error`.
-- [ ] Scan the C7 production surface for release/publish/deploy/execute/promote/issue-write methods.
+- [x] Regenerate the manifest and run `git diff --check`.
+- [x] Run the complete deterministic gate with `PYTHONHASHSEED=0 PYTHONWARNINGS=error`.
+- [x] Scan the C7 production surface for release/publish/deploy/execute/promote/issue-write methods.
 - [ ] Commit C7 paths, push one PR for issue #64, and verify CI/Sonar on the exact head SHA.
 - [ ] Merge only the verified SHA, pull `main`, rerun the final gate, create a SHA-256 checked source archive, write the French reprise report, and close the issue.
 
@@ -123,11 +123,11 @@
 
 Record only evidence from commands that actually ran:
 
-- Initial RED: pending.
-- Focused C7 suite: pending.
-- C4/C5/C6 regression suites: pending.
-- Runtime/policy smoke: pending.
-- Full deterministic gate: pending.
+- Initial RED: `43f71ed`, import failed as expected with `ModuleNotFoundError: No module named 'starcom.final_pack'`.
+- Focused C7 suite: 7/7 passed (`PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_final_pack.py' -q`).
+- C4/C5/C6 regression suites: 6 + 7 + 165 tests passed.
+- Runtime/policy smoke: passed in the focused suite and full repository gate.
+- Full deterministic gate: 464/464 tests passed in 210.475 seconds; compile, secret-scan (0), text-style (0), and manifest (126/126) passed.
 - CI/Sonar exact-head result: pending.
 - Post-merge `main` SHA, gate, archive SHA-256, and report path: pending.
 
