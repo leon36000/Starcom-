@@ -43,7 +43,7 @@ Interfaces:
 - [x] Step 2: Run the focused test to verify RED.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
   Expected: import or constructor failure because starcom.execution_plan and C5ExecutionPlanService do not yet exist.
 
@@ -70,7 +70,7 @@ Interfaces:
 - [ ] Step 2: Run the new tests and confirm the parser/schema behavior is RED.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_strict_contract_rejects_malformed_payloads -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
   Expected: failure because the parser and schema do not yet implement the contract.
 
@@ -81,7 +81,7 @@ Interfaces:
 - [ ] Step 4: Run the focused parser/schema tests.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_strict_contract_rejects_malformed_payloads -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
   Expected: PASS with no warnings and no C5 rows for rejected payloads.
 
@@ -102,7 +102,7 @@ Interfaces:
 - [ ] Step 2: Run the tests and confirm each failure is caused by the missing implementation.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_c5_binding_and_dag_fail_closed -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 - [ ] Step 3: Implement deterministic C4 reconstruction and validation.
 
@@ -111,7 +111,7 @@ Interfaces:
 - [ ] Step 4: Run the focused binding/DAG tests.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_c5_binding_and_dag_fail_closed -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 ### Task 4: Implement exact-byte admission, replay, and ledger persistence
 
@@ -131,7 +131,7 @@ Interfaces:
 - [ ] Step 2: Run the tests RED.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_exact_admission_replay_and_conflict -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 - [ ] Step 3: Implement atomic admission.
 
@@ -140,7 +140,7 @@ Interfaces:
 - [ ] Step 4: Run the focused admission tests GREEN.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_exact_admission_replay_and_conflict -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 ### Task 5: Implement independent reads and verification hardening
 
@@ -159,7 +159,7 @@ Interfaces:
 - [ ] Step 2: Run tamper tests RED.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5ExecutionPlanTests.test_verifier_detects_c5_tampering -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 - [ ] Step 3: Implement independent verification.
 
@@ -168,7 +168,7 @@ Interfaces:
 - [ ] Step 4: Run all focused C5 tests.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 ### Task 6: Wire the shared Runtime without an execution surface
 
@@ -187,7 +187,7 @@ Interfaces:
 - [ ] Step 2: Run the test RED.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan.C5RuntimeWiringTests -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 - [ ] Step 3: Wire the service after C4 construction and pass it through the dataclass constructor.
 
@@ -196,7 +196,8 @@ Interfaces:
 - [ ] Step 4: Run C5 tests and the existing CLI smoke tests.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan tests.test_smoke -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_smoke.py' -v
 
 ### Task 7: Regenerate repository manifest and document the integrated C5 boundary
 
@@ -217,7 +218,7 @@ Files:
 - [ ] Step 3: Run repository policy tests.
 
   Run:
-  PYTHONWARNINGS=error python3 -m unittest tests.test_repo_policy -v
+  PYTHONPATH=src PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_repo_policy.py' -v
 
 ### Task 8: Verify, commit, push, CI-verify, merge, and archive
 
@@ -228,7 +229,7 @@ Files:
 
   git status --short
   git diff --check
-  PYTHONHASHSEED=0 PYTHONWARNINGS=error python3 -m unittest tests.test_execution_plan -v
+  PYTHONPATH=src PYTHONHASHSEED=0 PYTHONWARNINGS=error python3 -m unittest discover -s tests -p 'test_execution_plan.py' -v
 
 - [ ] Step 2: Run the deterministic repository gate.
 
