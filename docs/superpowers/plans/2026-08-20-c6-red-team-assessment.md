@@ -124,7 +124,7 @@ Evidence recorded from commands that actually ran:
 - Real-C5-to-C6 smoke: **REAL_C5_C6_OK**, with C5 verification and C6 verification both true.
 - Forbidden operational-surface scan: no matching method definitions in `src/starcom/red_team.py`.
 - Manifest after implementation: **122 entries**, no missing, mismatched, or unlisted paths.
-- Full deterministic gate: **PASS** on the implementation worktree; **457/457 tests** in 211.087 seconds.
+- Full deterministic gate: **PASS** on the implementation worktree; **457/457 tests** in 210.754 seconds.
 - Compilation: **PASS**; secret scan: **0 findings**; text-style: **0 findings**; manifest: **122/122** with no mismatch, missing, or unlisted paths.
 - CI exact-head run and merge SHA: pending.
 
