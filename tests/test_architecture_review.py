@@ -3,17 +3,30 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
+import subprocess
+import sqlite3
 import tempfile
 import unittest
 
 from starcom.adoption import C3AdoptionService
 from starcom.adoption_execution import C3AdoptionExecutionService
-from starcom.architecture_candidate import C4ArchitectureCandidateService
-from starcom.architecture_input import C4ArchitectureInputService
+from starcom.architecture_candidate import (
+    C4ArchitectureCandidate,
+    C4ArchitectureCandidateService,
+    C4ArchitectureCandidateStatus,
+    C4ArchitectureCandidateVerification,
+)
+from starcom.architecture_input import (
+    C4ArchitectureInputService,
+    C4ArchitectureInputSet,
+    C4ArchitectureInputVerification,
+)
 from starcom.architecture_review import C4ArchitectureReviewService
 from starcom.census import C2CensusService
 from starcom.certification import C2CertificationService
 from starcom.continuity import ContinuityService
+from starcom.continuity_crypto import OpenSSLEd25519Verifier
 from starcom.db import Database
 from starcom.durable import DurableOutbox
 from starcom.errors import (
@@ -155,6 +168,141 @@ class C4ArchitectureReviewTests(unittest.TestCase):
         mutate()
         with self.assertRaises(ValidationError):
             self.service()
+
+    def review_fixture(self):  # type: ignore[no-untyped-def]
+        service = self.service()
+        root = self.accept()
+
+        def authorize(subject: str, action: str, resource: str, rule_id: str):
+            request = AuthorizationRequest(
+                subject=subject,
+                action=action,
+                resource=resource,
+                mission_id=f"fixture:{resource}",
+                context={},
+            )
+            self.graph.trust.add_rule(
+                PolicyRule(
+                    rule_id=rule_id,
+                    effect=PolicyEffect.ALLOW,
+                    subject=subject,
+                    action=action,
+                    resource=resource,
+                ),
+                actor="fixture-policy-owner",
+                occurred_at=T0,
+            )
+            decision = self.graph.trust.authorize(request, now=T0, consume=False)
+            self.assertTrue(decision.allowed)
+            return decision
+
+        input_decision = authorize(
+            "c4-input-owner",
+            "fixture.input.freeze",
+            "fixture:input-set-c4",
+            "fixture-input-authorize",
+        )
+        candidate_decision = authorize(
+            "c4-architect",
+            "fixture.candidate.create",
+            "fixture:candidate-c4",
+            "fixture-candidate-authorize",
+        )
+        self.graph.database.connection.execute(
+            """
+            INSERT INTO c4_architecture_input_sets (
+                input_set_id, member_count, success_count,
+                negative_evidence_count, input_set_digest,
+                author_identities_json, authorization_decision_id,
+                frozen_at, frozen_by, ledger_event_id, ledger_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "input-set-c4",
+                1,
+                1,
+                0,
+                "b" * 64,
+                '["c3-author"]',
+                input_decision.decision_id,
+                T0,
+                "c4-input-owner",
+                "fixture-input-ledger-event",
+                "1" * 64,
+            ),
+        )
+        self.graph.database.connection.execute(
+            """
+            INSERT INTO c4_architecture_candidates (
+                candidate_id, architecture_id, architecture_version,
+                input_set_id, input_set_digest, manifest_json,
+                manifest_sha256, adr_count, port_count, binding_count,
+                nfr_count, stage_order_json, status,
+                authorization_decision_id, created_at, created_by,
+                ledger_event_id, ledger_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "candidate-c4",
+                "architecture-c4",
+                "3.2",
+                "input-set-c4",
+                "b" * 64,
+                "{}",
+                "a" * 64,
+                1,
+                1,
+                1,
+                1,
+                '["RESEARCH","ARTIFACT","ACTION","MONITOR"]',
+                C4ArchitectureCandidateStatus.NOT_REVIEWED.value,
+                candidate_decision.decision_id,
+                T1,
+                "c4-architect",
+                "fixture-candidate-ledger-event",
+                "2" * 64,
+            ),
+        )
+        candidate = C4ArchitectureCandidate(
+            candidate_id="candidate-c4",
+            architecture_id="architecture-c4",
+            architecture_version="3.2",
+            input_set_id="input-set-c4",
+            input_set_digest="b" * 64,
+            manifest_sha256="a" * 64,
+            status=C4ArchitectureCandidateStatus.NOT_REVIEWED,
+            authorization_decision_id=candidate_decision.decision_id,
+            created_at=T1,
+            created_by="c4-architect",
+            ledger_event_id="fixture-candidate-ledger-event",
+            ledger_hash="2" * 64,
+        )
+        input_set = C4ArchitectureInputSet(
+            input_set_id="input-set-c4",
+            member_count=1,
+            success_count=1,
+            negative_evidence_count=0,
+            input_set_digest="b" * 64,
+            author_identities=("c3-author",),
+            authorization_decision_id=input_decision.decision_id,
+            frozen_at=T0,
+            frozen_by="c4-input-owner",
+            ledger_event_id="fixture-input-ledger-event",
+            ledger_hash="1" * 64,
+        )
+        member = {"requested_by": "c3-author", "execution_id": "execution-c4"}
+        self.graph.candidates.get_candidate = lambda candidate_id: candidate  # type: ignore[method-assign]
+        self.graph.candidates.verify_candidate = (  # type: ignore[method-assign]
+            lambda candidate_id: C4ArchitectureCandidateVerification(
+                candidate_id, ()
+            )
+        )
+        self.graph.inputs.get_input_set = lambda input_set_id: input_set  # type: ignore[method-assign]
+        self.graph.inputs.get_members = lambda input_set_id: (member,)  # type: ignore[method-assign]
+        self.graph.inputs.verify_input_set = (  # type: ignore[method-assign]
+            lambda input_set_id: C4ArchitectureInputVerification(input_set_id, ())
+        )
+        return service, root
 
     @staticmethod
     def root_context(
@@ -542,6 +690,441 @@ class C4ArchitectureReviewTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.accept(decision_now=T1, occurred_at=T0)
 
+    def test_review_schema_is_created_with_immutable_review_and_finding_rows(self) -> None:
+        self.service()
+        for table in (
+            "c4_architecture_reviews",
+            "c4_architecture_review_findings",
+        ):
+            with self.subTest(table=table):
+                row = self.graph.database.connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (table,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                for operation in ("update", "delete"):
+                    trigger = self.graph.database.connection.execute(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'trigger' AND name = ?",
+                        (f"{table}_no_{operation}",),
+                    ).fetchone()
+                    self.assertIsNotNone(trigger)
+
+    def test_admit_review_persists_exact_signed_material_and_ledger_event(self) -> None:
+        service, root = self.review_fixture()
+        value = self.valid_review_payload()
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        signature = self.verifier.sign(PUBLIC_KEY, payload)
+
+        review = service.admit_review(
+            "candidate-c4",
+            root.key_id,
+            payload,
+            signature,
+            actor="c4-review-admitter",
+            occurred_at=T2,
+        )
+
+        self.assertEqual(review.payload, payload)
+        self.assertEqual(review.signature, signature)
+        self.assertEqual(review.review_id, "review-001")
+        self.assertEqual(service.get_review_for_candidate("candidate-c4"), review)
+        self.assertEqual(service.get_findings(review.review_id), ())
+        event = self.graph.database.connection.execute(
+            "SELECT * FROM ledger_events WHERE event_id = ?",
+            (review.ledger_event_id,),
+        ).fetchone()
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event["kind"], "C4_ARCHITECTURE_REVIEW_ADMITTED")
+        self.assertEqual(event["stream_id"], service._review_stream("candidate-c4"))
+        self.assertEqual(event["actor"], "c4-review-admitter")
+
+    def admitted_fixture_review(self, **overrides):  # type: ignore[no-untyped-def]
+        service, root = self.review_fixture()
+        value = self.valid_review_payload(**overrides)
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        review = service.admit_review(
+            "candidate-c4",
+            root.key_id,
+            payload,
+            self.verifier.sign(PUBLIC_KEY, payload),
+            actor="c4-review-admitter",
+            occurred_at=T2,
+        )
+        return service, root, value, payload, review
+
+    def test_admit_review_exact_replay_returns_original_without_duplicate_event(self) -> None:
+        service, root, _, payload, first = self.admitted_fixture_review()
+        replay = service.admit_review(
+            "candidate-c4",
+            root.key_id,
+            payload,
+            self.verifier.sign(PUBLIC_KEY, payload),
+            actor="c4-review-admitter",
+            occurred_at="2026-08-16T12:03:00.000000Z",
+        )
+        self.assertEqual(replay, first)
+        self.assertEqual(
+            self.graph.database.connection.execute(
+                "SELECT COUNT(*) FROM c4_architecture_reviews"
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            len(self.graph.ledger.read_stream(service._review_stream("candidate-c4"))),
+            1,
+        )
+
+    def test_admit_review_replay_ignores_new_call_admission_timestamp(self) -> None:
+        service, root, _, payload, first = self.admitted_fixture_review()
+        replay = service.admit_review(
+            "candidate-c4",
+            root.key_id,
+            payload,
+            self.verifier.sign(PUBLIC_KEY, payload),
+            actor="c4-review-admitter",
+            occurred_at=T1,
+        )
+        self.assertEqual(replay, first)
+
+    @unittest.skipUnless(shutil.which("openssl"), "openssl executable is required")
+    def test_default_openssl_ed25519_verifier_checks_exact_signed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            private_key = root / "reviewer-private.pem"
+            public_key = root / "reviewer-public.pem"
+            payload = root / "review.json"
+            signature = root / "review.sig"
+            payload.write_bytes(b"{\"exact\":true}")
+            subprocess.run(
+                [
+                    "openssl",
+                    "genpkey",
+                    "-algorithm",
+                    "ED25519",
+                    "-out",
+                    str(private_key),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "openssl",
+                    "pkey",
+                    "-in",
+                    str(private_key),
+                    "-pubout",
+                    "-out",
+                    str(public_key),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "openssl",
+                    "pkeyutl",
+                    "-sign",
+                    "-rawin",
+                    "-inkey",
+                    str(private_key),
+                    "-in",
+                    str(payload),
+                    "-out",
+                    str(signature),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            verifier = OpenSSLEd25519Verifier()
+            public_key_bytes = public_key.read_bytes()
+            payload_bytes = payload.read_bytes()
+            signature_bytes = signature.read_bytes()
+            self.assertTrue(verifier.validate_public_key(public_key_bytes))
+            self.assertTrue(
+                verifier.verify(public_key_bytes, payload_bytes, signature_bytes)
+            )
+            self.assertFalse(
+                verifier.verify(public_key_bytes, payload_bytes + b"!", signature_bytes)
+            )
+
+    def test_admit_review_rejects_conflicting_reuse(self) -> None:
+        service, root, value, payload, _ = self.admitted_fixture_review()
+        changed = dict(value)
+        changed["review_id"] = "review-002"
+        changed_payload = json.dumps(
+            changed, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        with self.assertRaises(ConflictError):
+            service.admit_review(
+                "candidate-c4",
+                root.key_id,
+                changed_payload,
+                self.verifier.sign(PUBLIC_KEY, changed_payload),
+                actor="c4-review-admitter",
+                occurred_at=T2,
+            )
+        with self.assertRaises(ConflictError):
+            service.admit_review(
+                "candidate-c4",
+                root.key_id,
+                payload,
+                self.verifier.sign(PUBLIC_KEY, payload),
+                actor="different-admitter",
+                occurred_at=T2,
+            )
+
+    def test_review_and_finding_rows_are_immutable(self) -> None:
+        finding = {
+            "finding_id": "finding-001",
+            "code": "EVIDENCE_MISSING",
+            "severity": "HIGH",
+            "evidence_sha256": "c" * 64,
+            "description": "required independent evidence is missing",
+        }
+        service, _, _, _, review = self.admitted_fixture_review(
+            verdict="C4_ARCHITECTURE_REWORK_REQUIRED",
+            security_verification_result="FAIL",
+            findings=[finding],
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.graph.database.connection.execute(
+                "UPDATE c4_architecture_reviews SET reviewer_identity = ? WHERE review_id = ?",
+                ("tampered", review.review_id),
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.graph.database.connection.execute(
+                "DELETE FROM c4_architecture_reviews WHERE review_id = ?",
+                (review.review_id,),
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.graph.database.connection.execute(
+                "UPDATE c4_architecture_review_findings SET severity = ? WHERE review_id = ?",
+                ("LOW", review.review_id),
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.graph.database.connection.execute(
+                "DELETE FROM c4_architecture_review_findings WHERE review_id = ?",
+                (review.review_id,),
+            )
+        self.assertEqual(len(service.get_findings(review.review_id)), 1)
+
+    def test_admit_review_binds_every_signed_candidate_and_input_field(self) -> None:
+        cases = (
+            ("candidate_id", "different-candidate"),
+            ("architecture_id", "different-architecture"),
+            ("input_set_id", "different-input"),
+            ("manifest_sha256", "c" * 64),
+            ("input_set_digest", "d" * 64),
+        )
+        service, root = self.review_fixture()
+        for field, value in cases:
+            with self.subTest(field=field):
+                review = self.valid_review_payload(**{field: value})
+                payload = json.dumps(
+                    review, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                with self.assertRaises(IntegrityError):
+                    service.admit_review(
+                        "candidate-c4",
+                        root.key_id,
+                        payload,
+                        self.verifier.sign(PUBLIC_KEY, payload),
+                        actor="c4-review-admitter",
+                        occurred_at=T2,
+                    )
+                self.assertEqual(
+                    self.graph.database.connection.execute(
+                        "SELECT COUNT(*) FROM c4_architecture_reviews"
+                    ).fetchone()[0],
+                    0,
+                )
+
+    def test_admit_review_requires_clean_candidate_and_input_verifiers(self) -> None:
+        service, root = self.review_fixture()
+        self.graph.candidates.verify_candidate = (  # type: ignore[method-assign]
+            lambda candidate_id: C4ArchitectureCandidateVerification(
+                candidate_id, ("C4_CANDIDATE_TAMPERED",)
+            )
+        )
+        payload = json.dumps(
+            self.valid_review_payload(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        with self.assertRaises(IntegrityError):
+            service.admit_review(
+                "candidate-c4",
+                root.key_id,
+                payload,
+                self.verifier.sign(PUBLIC_KEY, payload),
+                actor="c4-review-admitter",
+                occurred_at=T2,
+            )
+        self.assertEqual(
+            self.graph.database.connection.execute(
+                "SELECT COUNT(*) FROM ledger_events "
+                "WHERE kind = 'C4_ARCHITECTURE_REVIEW_ADMITTED'"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_admit_review_enforces_static_independence_and_actor_separation(self) -> None:
+        cases = (
+            self.valid_review_payload(
+                reviewer_identity="c4-architect",
+            ),
+            self.valid_review_payload(
+                reviewer_identity="c4-input-owner",
+            ),
+            self.valid_review_payload(
+                reviewer_identity="c3-author",
+            ),
+            self.valid_review_payload(
+                independence_basis={
+                    "excluded_identities": ["c4-architect", "c4-input-owner"],
+                    "statement": "incomplete provenance",
+                }
+            ),
+        )
+        service, root = self.review_fixture()
+        for value in cases:
+            with self.subTest(value=value):
+                payload = json.dumps(
+                    value, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                error = StateTransitionError
+                with self.assertRaises(error):
+                    service.admit_review(
+                        "candidate-c4",
+                        root.key_id,
+                        payload,
+                        self.verifier.sign(PUBLIC_KEY, payload),
+                        actor="c4-review-admitter",
+                        occurred_at=T2,
+                    )
+
+        payload = json.dumps(
+            self.valid_review_payload(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        with self.assertRaises(StateTransitionError):
+            service.admit_review(
+                "candidate-c4",
+                root.key_id,
+                payload,
+                self.verifier.sign(PUBLIC_KEY, payload),
+                actor="independent-c4-reviewer",
+                occurred_at=T2,
+            )
+
+    def test_admit_review_enforces_review_and_admission_chronology(self) -> None:
+        cases = (
+            (self.valid_review_payload(reviewed_at_utc=T1), T2),
+            (self.valid_review_payload(reviewed_at_utc=T0), T2),
+            (self.valid_review_payload(), T1),
+        )
+        service, root = self.review_fixture()
+        for value, occurred_at in cases:
+            with self.subTest(value=value, occurred_at=occurred_at):
+                payload = json.dumps(
+                    value, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                with self.assertRaises(StateTransitionError):
+                    service.admit_review(
+                        "candidate-c4",
+                        root.key_id,
+                        payload,
+                        self.verifier.sign(PUBLIC_KEY, payload),
+                        actor="c4-review-admitter",
+                        occurred_at=occurred_at,
+                    )
+
+    def test_verify_review_accepts_clean_immutable_record(self) -> None:
+        service, _, _, _, review = self.admitted_fixture_review()
+        verification = service.verify_review(review.review_id)
+        self.assertTrue(verification.ok, verification.defects)
+
+    def test_verify_review_detects_payload_and_signature_byte_tampering(self) -> None:
+        service, _, _, _, review = self.admitted_fixture_review()
+        self.graph.database.connection.execute(
+            "DROP TRIGGER c4_architecture_reviews_no_update"
+        )
+        self.graph.database.connection.execute(
+            "UPDATE c4_architecture_reviews SET payload = ? WHERE review_id = ?",
+            (b"tampered-payload", review.review_id),
+        )
+        verification = service.verify_review(review.review_id)
+        self.assertFalse(verification.ok)
+        self.assertIn("REVIEW_PAYLOAD_DIGEST_MISMATCH", verification.defects)
+        self.assertIn("REVIEW_SIGNATURE_INVALID", verification.defects)
+
+        self.graph.database.connection.execute(
+            "UPDATE c4_architecture_reviews SET payload = ?, signature = ? "
+            "WHERE review_id = ?",
+            (review.payload, b"tampered-signature", review.review_id),
+        )
+        verification = service.verify_review(review.review_id)
+        self.assertFalse(verification.ok)
+        self.assertIn("REVIEW_SIGNATURE_DIGEST_MISMATCH", verification.defects)
+        self.assertIn("REVIEW_SIGNATURE_INVALID", verification.defects)
+
+    def test_verify_review_detects_stored_field_and_finding_tampering(self) -> None:
+        finding = {
+            "finding_id": "finding-001",
+            "code": "EVIDENCE_MISSING",
+            "severity": "HIGH",
+            "evidence_sha256": "c" * 64,
+            "description": "required independent evidence is missing",
+        }
+        service, _, _, _, review = self.admitted_fixture_review(
+            verdict="C4_ARCHITECTURE_REWORK_REQUIRED",
+            security_verification_result="FAIL",
+            findings=[finding],
+        )
+        self.graph.database.connection.execute(
+            "DROP TRIGGER c4_architecture_reviews_no_update"
+        )
+        self.graph.database.connection.execute(
+            "UPDATE c4_architecture_reviews SET reviewer_identity = ? WHERE review_id = ?",
+            ("tampered-reviewer", review.review_id),
+        )
+        verification = service.verify_review(review.review_id)
+        self.assertFalse(verification.ok)
+        self.assertIn("REVIEW_STORED_FIELD_MISMATCH:reviewer_identity", verification.defects)
+
+        self.graph.database.connection.execute(
+            "DROP TRIGGER c4_architecture_review_findings_no_update"
+        )
+        self.graph.database.connection.execute(
+            "UPDATE c4_architecture_review_findings SET description = ? WHERE review_id = ?",
+            ("tampered-finding", review.review_id),
+        )
+        verification = service.verify_review(review.review_id)
+        self.assertFalse(verification.ok)
+        self.assertIn("REVIEW_FINDINGS_MISMATCH", verification.defects)
+
+    def test_verify_review_detects_ledger_event_and_chain_tampering(self) -> None:
+        service, _, _, _, review = self.admitted_fixture_review()
+        self.graph.database.connection.execute("DROP TRIGGER ledger_events_no_update")
+        self.graph.database.connection.execute(
+            "UPDATE ledger_events SET actor = ? WHERE event_id = ?",
+            ("intruder", review.ledger_event_id),
+        )
+        verification = service.verify_review(review.review_id)
+        self.assertFalse(verification.ok)
+        self.assertIn("REVIEW_LEDGER_ACTOR_MISMATCH", verification.defects)
+        self.assertIn("REVIEW_LEDGER_CHAIN_INVALID", verification.defects)
+
+    def test_verify_review_missing_record_is_not_ok(self) -> None:
+        service = self.service()
+        verification = service.verify_review("missing-review")
+        self.assertFalse(verification.ok)
+        self.assertEqual(verification.defects, ("REVIEW_NOT_FOUND",))
+
     def test_root_acceptance_is_exact_replay_idempotent_and_conflicting_reuse_fails(self) -> None:
         decision = self.authorize_root()
         first = self.accept(decision=decision)
@@ -602,8 +1185,18 @@ class C4ArchitectureReviewTests(unittest.TestCase):
             "manifest_sha256": "a" * 64,
             "input_set_digest": "b" * 64,
             "reviewer_identity": "independent-c4-reviewer",
-            "reviewer_environment": {},
-            "independence_basis": {},
+            "reviewer_environment": {
+                "description": "isolated independent review worktree",
+                "environment_type": "ISOLATED_WORKTREE",
+            },
+            "independence_basis": {
+                "excluded_identities": [
+                    "c3-author",
+                    "c4-architect",
+                    "c4-input-owner",
+                ],
+                "statement": "reviewer is independent of static provenance identities",
+            },
             "reviewed_at_utc": T2,
             "structural_verification_result": "PASS",
             "security_verification_result": "PASS",
@@ -708,6 +1301,17 @@ class C4ArchitectureReviewTests(unittest.TestCase):
                     self.valid_review_payload(**{field: "INCONCLUSIVE"})
                 )
 
+    def test_signed_payload_rejects_non_string_enum_fields(self) -> None:
+        cases = (
+            self.valid_review_payload(structural_verification_result=[]),
+            self.valid_review_payload(security_verification_result={}),
+            self.valid_review_payload(evidence_binding_result=["PASS"]),
+            self.valid_review_payload(verdict={"value": "C4_ARCHITECTURE_ACCEPTED"}),
+        )
+        for value in cases:
+            with self.subTest(value=value):
+                self.assert_signed_payload_validation_error(value)
+
     def test_signed_payload_rejects_invalid_verdict(self) -> None:
         self.assert_signed_payload_validation_error(
             self.valid_review_payload(verdict="C4_ARCHITECTURE_MAYBE")
@@ -759,3 +1363,126 @@ class C4ArchitectureReviewTests(unittest.TestCase):
             ValidationError,
         )
         self.assertEqual(self.verifier.calls[-1], ("verify", payload))
+
+    def test_signed_payload_requires_closed_reviewer_environment(self) -> None:
+        cases = (
+            "ISOLATED_WORKTREE",
+            {"description": "isolated"},
+            {
+                "description": "isolated",
+                "environment_type": "ISOLATED_WORKTREE",
+                "unexpected": "forbidden",
+            },
+            {
+                "description": "isolated",
+                "environment_type": "NETWORKED_SHARED",
+            },
+        )
+        for environment in cases:
+            with self.subTest(environment=environment):
+                self.assert_signed_payload_validation_error(
+                    self.valid_review_payload(reviewer_environment=environment)
+                )
+
+    def test_signed_payload_requires_sorted_independent_identities_and_statement(self) -> None:
+        cases = (
+            ["c4-architect"],
+            {"excluded_identities": ["c4-architect"]},
+            {
+                "excluded_identities": ["z-author", "a-author"],
+                "statement": "independent",
+            },
+            {
+                "excluded_identities": ["a-author", "a-author"],
+                "statement": "independent",
+            },
+            {
+                "excluded_identities": ["c4-architect"],
+                "statement": "",
+            },
+        )
+        for independence in cases:
+            with self.subTest(independence=independence):
+                self.assert_signed_payload_validation_error(
+                    self.valid_review_payload(independence_basis=independence)
+                )
+
+    def test_signed_payload_requires_verdict_result_and_findings_consistency(self) -> None:
+        accepted_with_failure = self.valid_review_payload(
+            security_verification_result="FAIL"
+        )
+        accepted_with_finding = self.valid_review_payload(
+            findings=[
+                {
+                    "finding_id": "finding-001",
+                    "code": "EVIDENCE_MISSING",
+                    "severity": "HIGH",
+                    "evidence_sha256": "c" * 64,
+                    "description": "required independent evidence is missing",
+                }
+            ]
+        )
+        rejected_without_failure = self.valid_review_payload(
+            verdict="C4_ARCHITECTURE_REJECTED",
+            findings=[
+                {
+                    "finding_id": "finding-001",
+                    "code": "EVIDENCE_MISSING",
+                    "severity": "HIGH",
+                    "evidence_sha256": "c" * 64,
+                    "description": "required independent evidence is missing",
+                }
+            ],
+        )
+        rejected_without_finding = self.valid_review_payload(
+            verdict="C4_ARCHITECTURE_REJECTED",
+            security_verification_result="FAIL",
+        )
+        for value in (
+            accepted_with_failure,
+            accepted_with_finding,
+            rejected_without_failure,
+            rejected_without_finding,
+        ):
+            with self.subTest(value=value):
+                self.assert_signed_payload_validation_error(value)
+
+    def test_signed_payload_rejects_unclassified_or_unsorted_findings(self) -> None:
+        base = self.valid_review_payload(
+            verdict="C4_ARCHITECTURE_REWORK_REQUIRED",
+            security_verification_result="FAIL",
+        )
+        cases = (
+            "finding",
+            [{"finding_id": "finding-001"}],
+            [
+                {
+                    "finding_id": "finding-001",
+                    "code": "CALLER_DEFINED_CODE",
+                    "severity": "HIGH",
+                    "evidence_sha256": "c" * 64,
+                    "description": "missing",
+                }
+            ],
+            [
+                {
+                    "finding_id": "finding-002",
+                    "code": "EVIDENCE_MISSING",
+                    "severity": "HIGH",
+                    "evidence_sha256": "c" * 64,
+                    "description": "missing",
+                },
+                {
+                    "finding_id": "finding-001",
+                    "code": "EVIDENCE_MISSING",
+                    "severity": "HIGH",
+                    "evidence_sha256": "c" * 64,
+                    "description": "missing",
+                },
+            ],
+        )
+        for findings in cases:
+            with self.subTest(findings=findings):
+                self.assert_signed_payload_validation_error(
+                    self.valid_review_payload(**dict(base, findings=findings))
+                )
