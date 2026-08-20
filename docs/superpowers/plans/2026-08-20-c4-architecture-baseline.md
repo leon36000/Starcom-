@@ -24,7 +24,7 @@ Admit one exact-byte signed C4 architecture v3.2 baseline bound to a freshly rec
 - [x] Implement independent verification of payload, signature, snapshot, adoption/execution references, ledger event and chain.
 - [x] Run focused tests, C4 regressions and the deterministic repository gate.
 - [x] Regenerate `MANIFEST.sha256` after GREEN.
-- [ ] Commit, push, CI-verify and merge only after head-SHA checks.
+- [x] Commit, push, CI-verify and merge only after head-SHA checks.
 
 ## Verification evidence
 
@@ -37,3 +37,10 @@ Observed evidence before integration:
 - Deterministic repository gate: **444/444 tests PASS** with `PYTHONHASHSEED=0` and `PYTHONWARNINGS=error`.
 - Compilation: PASS; secret scan: **0 findings**; text-style: **0 findings**; manifest: **114/114**.
 - Falsification covers duplicate/extra fields, exact-byte whitespace mutation, invalid signature/root, selected candidate without adoption, chronology, identity collision, immutable row/membership tampering and deterministic replay.
+
+Integration evidence:
+
+- Product commit: `852bfbffa28bce93b2e8bf39f4efc608361d9278`.
+- PR [#79](https://github.com/leon36000/Starcom-/pull/79), CI run #492: **success**.
+- Merge commit: `f7eea33fc7c6a980cd038441fa52a1cec6be0e97`.
+- Fresh post-merge gate on `main`: **444/444**, compile/scans/style/manifest all PASS.
