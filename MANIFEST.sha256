@@ -14,7 +14,7 @@ efcb74d0edbd6580c3e96f70dcd25aa4205b4f11c66d2ddfaa1a841311460f8b  docs/superpowe
 025d4036d526dd62f2edc46526d7993baf65416d4ef84c1663c9fac7cbe73eaa  docs/superpowers/plans/2026-08-14-c3-executor-worker-attestation-v2.md
 33e01246c475bf4339df78a8314bec571f93405b7378840bb79fcef88d3a2005  docs/superpowers/plans/2026-08-14-c3-signed-decision.md
 592fe90bdd2e368daf383f30ea1c4d2d4366db6dac08306f5b3c1446dc8d989a  docs/superpowers/plans/2026-08-14-c4-architecture-foundation.md
-afa8e42dbc3838f93d94c7dbf24ac71fe003ff33a381d977a833286c9df19de5  docs/superpowers/plans/2026-08-20-12a-research-marathon.md
+c8b4d3aef1538405ebe7590f12ebc2c8ed30ec6c04fbda712c3b90567dece339  docs/superpowers/plans/2026-08-20-12a-research-marathon.md
 03495d950398d8ae175e0fd799f8b7f865c8666e887069072f98ac2ca28f0533  docs/superpowers/plans/2026-08-20-c4-architecture-baseline.md
 7b5fb6e158478f6a968dea7ade64d8750a3a06a788241d0514ff3a59137a4d24  docs/superpowers/plans/2026-08-20-c4-architecture-publication.md
 2d31d691d4f20e2571fc460f5185a0c197d6ca1a12e2701ba87d24fa50dd81fc  docs/superpowers/plans/2026-08-20-c4-architecture-review-cli.md
@@ -31,7 +31,7 @@ bbdb6bc71627dd185274242345262b82d91a2eaae98d4ac8e2be33853d0435fa  docs/superpowe
 9f7f935c63d2f6e892c29f813756180a06ebfdd678518bdb9b4867b0a77118e7  docs/superpowers/specs/2026-08-14-c3-executor-worker-attestation-v2-design.md
 a28217191b64703900e868f30f3d556f7f55e58242c6479ebd65d80e811346d2  docs/superpowers/specs/2026-08-14-c3-signed-decision-design.md
 668da87e7f3b69f9fb42acf52ebea611b1d132fc40b1d65af9e87d568c47c99e  docs/superpowers/specs/2026-08-14-c4-architecture-foundation-design.md
-ab38ee34e9638979ea102a1a747046a678667948ba8a1d48479599bae1738cab  docs/superpowers/specs/2026-08-20-12a-research-marathon-design.md
+1a7a9fd98ddc9ce5e5d8f95398de2acca8a1afa2d0790c874db31bb18e2a00cc  docs/superpowers/specs/2026-08-20-12a-research-marathon-design.md
 5c592d74306a4c38b243020fb02c77dcf0e67f2561ce57982948a744220f7be0  docs/superpowers/specs/2026-08-20-c5-execution-plan-design.md
 fd42f188c1dc433295ed1bab201ce6a632d4b8886ee1aa656fa88fa8d879f165  docs/superpowers/specs/2026-08-20-c6-red-team-assessment-design.md
 a146b58257c65797a2b84757346a046588eed7c94ab60308aac042289fe1ba0e  docs/superpowers/specs/2026-08-20-c7-final-evidence-pack-design.md
