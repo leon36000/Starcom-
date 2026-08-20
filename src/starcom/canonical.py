@@ -73,6 +73,38 @@ def canonical_json_bytes(value: Any) -> bytes:
     return canonical_json(value).encode("utf-8")
 
 
+def parse_strict_json_object(
+    payload: object,
+    *,
+    max_bytes: int,
+    label: str,
+) -> dict[str, object]:
+    if not isinstance(payload, bytes) or not payload or len(payload) > max_bytes:
+        raise ValidationError("payload must be non-empty bytes within the size limit")
+
+    def no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=no_duplicates,
+            parse_constant=lambda _: (_ for _ in ()).throw(
+                ValueError("invalid JSON constant")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValidationError(f"{label} payload must be strict UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValidationError(f"{label} payload must be a JSON object")
+    return value
+
+
 def sha256_digest(value: Any | bytes) -> str:
     raw = value if isinstance(value, bytes) else canonical_json_bytes(value)
     return hashlib.sha256(raw).hexdigest()
