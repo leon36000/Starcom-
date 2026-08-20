@@ -86,7 +86,7 @@ The service accepts only a payload whose declared outcome matches the derived ou
 
 The failure branch takes precedence over blocked evidence when both are present, so a known failing invariant cannot be hidden by an insufficient-evidence case.
 
-`assessed_at_utc` must be at or after the latest C5 evidence timestamp. Admission time must be at or after the signed assessment time.
+`assessed_at_utc` must be strictly after the latest C5 evidence timestamp. Admission time must be at or after the signed assessment time.
 
 ## Persistence and provenance
 

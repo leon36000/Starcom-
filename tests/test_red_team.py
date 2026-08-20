@@ -305,6 +305,16 @@ class C6RedTeamTests(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             self.graph.service.snapshot("plan-1")
         self.graph.execution_plan.clean = True
+        original_payload_sha256 = self.graph.execution_plan.plan.payload_sha256
+        self.graph.execution_plan.plan.payload_sha256 = "f" * 64
+        with self.assertRaises(IntegrityError):
+            self.graph.service.snapshot("plan-1")
+        self.graph.execution_plan.plan.payload_sha256 = original_payload_sha256
+        original_ledger_hash = self.graph.execution_plan.plan.ledger_hash
+        self.graph.execution_plan.plan.ledger_hash = "e" * 64
+        with self.assertRaises(IntegrityError):
+            self.graph.service.snapshot("plan-1")
+        self.graph.execution_plan.plan.ledger_hash = original_ledger_hash
         for overrides in (
             {"assessor_identity": "c5-planner"},
             {"adjudicator_identity": "c5-reviewer"},
@@ -328,6 +338,51 @@ class C6RedTeamTests(unittest.TestCase):
                         actor="c6-admitter",
                         occurred_at=T6,
                     )
+
+    def test_fail_and_blocked_verdicts_are_derived_and_block_c7(self) -> None:
+        self.graph.accept_root()
+        failed_payload = self.graph.payload(
+            attack_cases=[self.graph.attack(outcome="FAIL")],
+            verdict="C6_FAIL_REMEDIATION_REQUIRED",
+            remediation_required=True,
+            release_recommendation="BLOCK_C7",
+        )
+        failed = self.graph.service.admit_assessment(
+            "plan-1",
+            "c6-root",
+            failed_payload,
+            self.graph.verifier.sign(PUBLIC_KEY, failed_payload),
+            actor="c6-admitter",
+            occurred_at=T6,
+        )
+        self.assertEqual(failed.verdict, "C6_FAIL_REMEDIATION_REQUIRED")
+        self.assertEqual(failed.release_recommendation, "BLOCK_C7")
+        self.assertTrue(self.graph.service.verify_assessment(failed.assessment_id).ok)
+
+        blocked_tempdir = tempfile.TemporaryDirectory()
+        blocked_graph = RedTeamGraph(Path(blocked_tempdir.name))
+        try:
+            blocked_graph.accept_root()
+            blocked_payload = blocked_graph.payload(
+                attack_cases=[blocked_graph.attack(outcome="BLOCKED")],
+                verdict="C6_BLOCKED_INSUFFICIENT_EVIDENCE",
+                remediation_required=False,
+                release_recommendation="BLOCK_C7",
+            )
+            blocked = blocked_graph.service.admit_assessment(
+                "plan-1",
+                "c6-root",
+                blocked_payload,
+                blocked_graph.verifier.sign(PUBLIC_KEY, blocked_payload),
+                actor="c6-admitter",
+                occurred_at=T6,
+            )
+            self.assertEqual(blocked.verdict, "C6_BLOCKED_INSUFFICIENT_EVIDENCE")
+            self.assertEqual(blocked.release_recommendation, "BLOCK_C7")
+            self.assertTrue(blocked_graph.service.verify_assessment(blocked.assessment_id).ok)
+        finally:
+            blocked_graph.close()
+            blocked_tempdir.cleanup()
 
     def test_exact_admission_replay_and_conflict(self) -> None:
         payload = self.graph.payload()

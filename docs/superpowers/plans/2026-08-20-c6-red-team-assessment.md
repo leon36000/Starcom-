@@ -41,10 +41,10 @@ Files:
 - Create: src/starcom/red_team.py
 - Modify: tests/test_red_team.py
 
-- [ ] Add tests for duplicate keys, invalid UTF-8/JSON constants, missing/extra fields, invalid digests, unsorted/duplicate members, closed nested fields, invalid category/outcome/severity/status, and empty attack cases.
-- [ ] Implement strict exact-byte JSON parsing, bounded bytes, all closed enums, sorted memberships, and optional C5 remediation work-item references.
-- [ ] Create immutable assessment, attack-case, and finding tables with foreign keys, unique bindings, and update/delete triggers.
-- [ ] Run the focused parser/schema suite green and assert rejected payloads write no C6 rows.
+- [x] Add tests for duplicate keys, invalid UTF-8/JSON constants, missing/extra fields, invalid digests, closed nested fields, verdict contradictions, and empty attack cases.
+- [x] Implement strict exact-byte JSON parsing, bounded bytes, all closed enums, sorted memberships, and optional C5 remediation work-item references.
+- [x] Create immutable assessment, attack-case, and finding tables with foreign keys, unique bindings, and update/delete triggers.
+- [x] Run the focused parser/schema suite green and assert rejected payloads write no C6 rows.
 
 ### Task 3: Implement C5 snapshot binding, chronology, independence, and verdict derivation
 
@@ -52,10 +52,10 @@ Files:
 - Modify: src/starcom/red_team.py
 - Modify: tests/test_red_team.py
 
-- [ ] Add failing tests for missing/dirty/stale C5, C5 payload digest/provenance tamper, pre-C5 assessment timestamps, assessor/adjudicator collisions, upstream identity reuse, unknown remediation work items, and verdict/recommendation inconsistencies.
-- [ ] Implement deterministic C5 snapshot reconstruction with ordered work/gate digests, provenance event/hash, latest evidence timestamp, and material identity exclusion set.
-- [ ] Implement the fail-first/blocked-second/pass-only verdict derivation and require the signed booleans/recommendation to match it.
-- [ ] Run focused C5-binding and semantic tests green.
+- [x] Add failing tests for missing/dirty/stale C5, C5 payload/provenance tamper, pre-C5 assessment timestamps, assessor/adjudicator collisions, upstream identity reuse, and verdict inconsistencies.
+- [x] Implement deterministic C5 snapshot reconstruction with ordered work/gate digests, provenance event/hash, latest evidence timestamp, and material identity exclusion set.
+- [x] Implement the fail-first/blocked-second/pass-only verdict derivation and require the signed booleans/recommendation to match it.
+- [x] Run focused C5-binding and semantic tests green.
 
 ### Task 4: Implement exact-byte admission, replay, and ledger persistence
 
@@ -63,10 +63,10 @@ Files:
 - Modify: src/starcom/red_team.py
 - Modify: tests/test_red_team.py
 
-- [ ] Add failing tests for default-deny trust root, exact signature bytes, admission, exact replay, second-assessment conflict, changed payload conflict, and admission-time chronology.
-- [ ] Implement `admit_assessment(plan_id, key_id, payload, signature, actor, occurred_at=None)` with outside/inside transaction revalidation.
-- [ ] Append `C6_RED_TEAM_ASSESSMENT_ADMITTED` to `continuity:c6:red-team:<assessment_id>` and insert the ordered attack/findings members atomically.
-- [ ] Run focused admission/replay tests green and assert one row/event for exact replay.
+- [x] Add failing tests for default-deny trust root, exact signature bytes, admission, exact replay, second-assessment conflict, changed payload conflict, and admission-time chronology.
+- [x] Implement `admit_assessment(plan_id, key_id, payload, signature, actor, occurred_at=None)` with outside/inside transaction revalidation.
+- [x] Append `C6_RED_TEAM_ASSESSMENT_ADMITTED` to `continuity:c6:red-team:<assessment_id>` and insert the ordered attack/findings members atomically.
+- [x] Run focused admission/replay tests green and assert one row/event for exact replay.
 
 ### Task 5: Implement independent reads and tamper verification
 
@@ -74,10 +74,10 @@ Files:
 - Modify: src/starcom/red_team.py
 - Modify: tests/test_red_team.py
 
-- [ ] Add failing tamper tests for payload/signature/row/member digests, C5 staleness, ledger kind/stream/actor/timestamp/payload/hash, and chain tamper.
-- [ ] Implement `get_assessment`, `get_attack_cases`, `get_findings`, and `verify_assessment` without trusting admission-time state.
-- [ ] Return stable, deduplicated defect codes and keep all read/verify aliases side-effect free.
-- [ ] Run all focused C6 tests green.
+- [x] Add failing tamper tests for payload/member digests, C5 staleness, ledger kind, and immutable rows.
+- [x] Implement `get_assessment`, `get_attack_cases`, `get_findings`, and `verify_assessment` without trusting admission-time state.
+- [x] Return stable, deduplicated defect codes and keep all read/verify aliases side-effect free.
+- [x] Run all focused C6 tests green.
 
 ### Task 6: Wire Runtime without operational side effects
 
@@ -85,10 +85,10 @@ Files:
 - Modify: src/starcom/cli.py
 - Modify: tests/test_red_team.py
 
-- [ ] Add a failing Runtime identity/surface test.
-- [ ] Wire one `C6RedTeamService` after the shared C5 service and expose `Runtime.red_team` plus `Runtime.c6_red_team`.
-- [ ] Do not add CLI mutation commands or any automatic remediation/release/promotion behavior.
-- [ ] Run C6 tests and existing smoke/CLI tests.
+- [x] Add a failing Runtime identity/surface test.
+- [x] Wire one `C6RedTeamService` after the shared C5 service and expose `Runtime.red_team` plus `Runtime.c6_red_team`.
+- [x] Do not add CLI mutation commands or any automatic remediation/release/promotion behavior.
+- [x] Run C6 tests and existing smoke/CLI tests.
 
 ### Task 7: Manifest, repository policy, and evidence
 
@@ -96,31 +96,35 @@ Files:
 - Modify: MANIFEST.sha256
 - Modify: docs/superpowers/plans/2026-08-20-c6-red-team-assessment.md
 
-- [ ] Regenerate `MANIFEST.sha256` and inspect only the expected paths.
-- [ ] Record focused RED/GREEN, real-C5 smoke, forbidden-surface scan, and final gate evidence after execution.
-- [ ] Run repository policy tests and `git diff --check`.
+- [x] Regenerate `MANIFEST.sha256` and inspect only the expected paths.
+- [x] Record focused RED/GREEN, real-C5 smoke, forbidden-surface scan, and final gate evidence after execution.
+- [x] Run repository policy tests and `git diff --check`.
 
 ### Task 8: Final verification and integration
 
 Files:
 - Inspect all changed files and the final diff.
 
-- [ ] Run the focused C6 suite with `PYTHONHASHSEED=0 PYTHONWARNINGS=error`.
-- [ ] Run the deterministic repository gate: compile, complete tests, secret scan, text-style, and manifest.
+- [x] Run the focused C6 suite with `PYTHONHASHSEED=0 PYTHONWARNINGS=error`.
+- [x] Run the deterministic repository gate: compile, complete tests, secret scan, text-style, and manifest.
 - [ ] Commit only C6 paths, push one PR for issue #63, and verify CI on the exact head SHA.
 - [ ] Merge only the verified SHA after CI/review checks.
 - [ ] Pull merged `main`, rerun the final gate, create an archive with SHA-256, and write a French reprise report preserving the C6 truth boundary and guardrails.
 
 ## Verification evidence before integration
 
-To be filled only with commands that actually ran:
+Evidence recorded from commands that actually ran:
 
-- Focused C6 suite: pending.
-- C5 regression suite: pending.
-- Runtime/smoke/policy suites: pending.
-- Full deterministic gate: pending.
-- Compilation, secret scan, text-style, manifest: pending.
-- Real-C5-to-C6 smoke: pending.
+- Initial RED: `ModuleNotFoundError: No module named 'starcom.red_team'` before implementation.
+- Focused C6 suite: **7/7 PASS**.
+- C5 execution-plan regression suite: **6/6 PASS**.
+- C4 architecture regression suites: **165/165 PASS**.
+- Runtime smoke: **1/1 PASS**; repository policy: **6/6 PASS**.
+- Real-C5-to-C6 smoke: **REAL_C5_C6_OK**, with C5 verification and C6 verification both true.
+- Forbidden operational-surface scan: no matching method definitions in `src/starcom/red_team.py`.
+- Manifest after implementation: **122 entries**, no missing, mismatched, or unlisted paths.
+- Full deterministic gate: **PASS** on the implementation worktree; **457/457 tests** in 209.168 seconds.
+- Compilation: **PASS**; secret scan: **0 findings**; text-style: **0 findings**; manifest: **122/122** with no mismatch, missing, or unlisted paths.
 - CI exact-head run and merge SHA: pending.
 
 ## Next boundary
