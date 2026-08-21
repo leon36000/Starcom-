@@ -107,13 +107,24 @@ class SandboxComponentExecutor:
                 {"missing": sorted(set(paths) - actual), "unexpected": sorted(actual - set(paths))},
             )
         for item in files:
-            path = self.source_root / str(item["path"])
+            path = self._source_file(item["path"])
             if not path.is_file() or path.is_symlink():
                 raise ValidationError(f"manifest file is not a regular file: {item['path']}")
             content = path.read_bytes()
             if len(content) != item["size"] or hashlib.sha256(content).hexdigest() != item["digest"]:
                 raise IntegrityError(f"manifest digest or size mismatch: {item['path']}")
         return {"component": component, "version": version, "files": files}
+
+    def _source_file(self, relative: object, field: str = "path") -> Path:
+        if self.source_root is None:
+            raise ValidationError("source_root must be explicitly configured")
+        safe = self._safe_relative(relative, field)
+        root = self.source_root.resolve()
+        candidate = root / safe
+        resolved = candidate.resolve()
+        if resolved != candidate or not resolved.is_relative_to(root):
+            raise ValidationError(f"{field} resolves outside source_root")
+        return resolved
 
     def _ensure_sandbox_root(self) -> None:
         if self.sandbox_root.exists() and self.sandbox_root.is_symlink():
@@ -253,7 +264,7 @@ class SandboxComponentExecutor:
                     shutil.rmtree(staging)
                 for item in manifest["files"]:
                     assert isinstance(item, dict)
-                    source = self.source_root / str(item["path"])
+                    source = self._source_file(item["path"])
                     destination = staging / str(item["path"])
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_bytes(source.read_bytes())
