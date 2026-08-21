@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
 import math
@@ -11,6 +10,7 @@ from typing import Any, Mapping
 from .canonical import canonical_json, parse_strict_json_object, sha256_digest, utc_now
 from .continuity_crypto import OpenSSLEd25519Verifier
 from .errors import ConflictError, IntegrityError, NotFoundError, StateTransitionError, ValidationError
+from .red_team import C6RedTeamService
 
 
 _MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
@@ -189,6 +189,16 @@ class ReleaseCandidateVerification:
 class ReleaseCandidateService:
     """Exact-byte Block 19 authority; readiness never changes release state."""
 
+    _find = staticmethod(C6RedTeamService._find)
+    _text = staticmethod(C6RedTeamService._text)
+    _digest = staticmethod(C6RedTeamService._digest)
+    _timestamp = staticmethod(C6RedTeamService._timestamp)
+    _dt = staticmethod(C6RedTeamService._dt)
+    _bounded_payload = staticmethod(C6RedTeamService._bounded_payload)
+    _bounded_signature = staticmethod(C6RedTeamService._bounded_signature)
+    _blob = staticmethod(C6RedTeamService._blob)
+    _assert_signature = C6RedTeamService._assert_signature
+
     def __init__(
         self,
         database: Any,
@@ -209,45 +219,6 @@ class ReleaseCandidateService:
             OpenSSLEd25519Verifier(),
         )
         self._initialize_schema()
-
-    @staticmethod
-    def _find(values: list[Any], predicate: Any) -> Any | None:
-        return next(
-            (value for value in values if value is not None and predicate(value)),
-            None,
-        )
-
-    @staticmethod
-    def _text(value: object, field: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValidationError(f"{field} must be a non-empty string")
-        return value
-
-    @classmethod
-    def _digest(cls, value: object, field: str) -> str:
-        value = cls._text(value, field)
-        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
-            raise ValidationError(f"{field} must be a lowercase SHA-256 digest")
-        return value
-
-    @staticmethod
-    def _timestamp(value: object, field: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValidationError(f"{field} must be an RFC 3339 timestamp")
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValidationError(f"{field} must be an RFC 3339 timestamp") from exc
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValidationError(f"{field} must be timezone-aware")
-        return value
-
-    @staticmethod
-    def _dt(value: str) -> datetime:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValidationError("timestamp must be timezone-aware")
-        return parsed
 
     @classmethod
     def _sorted_strings(
@@ -271,25 +242,6 @@ class ReleaseCandidateService:
         if isinstance(value, float) and not math.isfinite(value):
             raise ValidationError(f"{field} must be finite")
         return value
-
-    @staticmethod
-    def _bounded_payload(value: object) -> bytes:
-        if not isinstance(value, bytes) or not value or len(value) > _MAX_PAYLOAD_BYTES:
-            raise ValidationError("payload must be non-empty bytes within the size limit")
-        return value
-
-    @staticmethod
-    def _bounded_signature(value: object) -> bytes:
-        if not isinstance(value, bytes) or not value or len(value) > _MAX_SIGNATURE_BYTES:
-            raise ValidationError("signature must be non-empty bytes within the size limit")
-        return value
-
-    @staticmethod
-    def _blob(row: sqlite3.Row, field: str) -> bytes:
-        value = row[field]
-        if not isinstance(value, bytes) or not value:
-            raise IntegrityError(f"stored {field} is invalid")
-        return bytes(value)
 
     @classmethod
     def _parse_payload(cls, payload: bytes) -> dict[str, object]:
@@ -654,22 +606,6 @@ class ReleaseCandidateService:
             "signature_sha256": record.signature_sha256,
         }
 
-    def _assert_signature(self, key_id: str, payload: bytes, signature: bytes) -> None:
-        trust_root = self.continuity.verify_trust_root(key_id)
-        if not getattr(trust_root, "ok", False):
-            raise IntegrityError(
-                "Block 19 RC trust root verification failed",
-                {"key_id": key_id, "defects": list(getattr(trust_root, "defects", ()))},
-            )
-        row = self.database.connection.execute(
-            "SELECT public_key_pem FROM continuity_trust_roots WHERE key_id = ?",
-            (key_id,),
-        ).fetchone()
-        if row is None or not self.signature_verifier.verify(
-            bytes(row["public_key_pem"]), payload, signature
-        ):
-            raise IntegrityError("Block 19 RC signature is invalid")
-
     @classmethod
     def _assert_payload_binding(
         cls,
@@ -755,43 +691,21 @@ class ReleaseCandidateService:
     get = get_assessment
     get_release_candidate = get_assessment
 
-    @classmethod
-    def _read_members(
-        cls,
-        database: Any,
-        assessment_id: str,
-        table: str,
-    ) -> tuple[Mapping[str, object], ...]:
-        rows = database.connection.execute(
-            f"SELECT material_json FROM {table} WHERE assessment_id = ? ORDER BY ordinal",
-            (assessment_id,),
-        ).fetchall()
-        values: list[Mapping[str, object]] = []
-        for row in rows:
-            try:
-                material = json.loads(str(row["material_json"]))
-            except (TypeError, json.JSONDecodeError) as exc:
-                raise IntegrityError("stored Block 19 membership material is invalid") from exc
-            if not isinstance(material, dict):
-                raise IntegrityError("stored Block 19 membership material is invalid")
-            values.append(material)
-        return tuple(values)
-
     def get_evidence_manifest(self, assessment_id: str) -> tuple[Mapping[str, object], ...]:
         self.get_assessment(assessment_id)
-        return self._read_members(self.database, assessment_id, "block19_rc_evidence")
+        return C6RedTeamService._read_members(self.database, assessment_id, "block19_rc_evidence")
 
     def get_benchmarks(self, assessment_id: str) -> tuple[Mapping[str, object], ...]:
         self.get_assessment(assessment_id)
-        return self._read_members(self.database, assessment_id, "block19_rc_benchmarks")
+        return C6RedTeamService._read_members(self.database, assessment_id, "block19_rc_benchmarks")
 
     def get_red_team_cases(self, assessment_id: str) -> tuple[Mapping[str, object], ...]:
         self.get_assessment(assessment_id)
-        return self._read_members(self.database, assessment_id, "block19_rc_red_team_cases")
+        return C6RedTeamService._read_members(self.database, assessment_id, "block19_rc_red_team_cases")
 
     def get_release_gates(self, assessment_id: str) -> tuple[Mapping[str, object], ...]:
         self.get_assessment(assessment_id)
-        return self._read_members(self.database, assessment_id, "block19_rc_gates")
+        return C6RedTeamService._read_members(self.database, assessment_id, "block19_rc_gates")
 
     get_evidence = get_evidence_manifest
     get_red_team = get_red_team_cases
@@ -1080,52 +994,6 @@ class ReleaseCandidateService:
     admit = admit_assessment
     admit_rc_assessment = admit_assessment
 
-    @classmethod
-    def _verify_membership(
-        cls,
-        database: Any,
-        record: ReleaseCandidateAssessment,
-        expected: list[Mapping[str, object]],
-        table: str,
-        identifier_field: str,
-        prefix: str,
-        defects: list[str],
-    ) -> None:
-        rows = database.connection.execute(
-            f"SELECT * FROM {table} WHERE assessment_id = ? ORDER BY ordinal",
-            (record.assessment_id,),
-        ).fetchall()
-        actual: list[Mapping[str, object]] = []
-        if len(rows) != len(expected):
-            defects.append(f"{prefix}_COUNT_MISMATCH")
-        for ordinal, row in enumerate(rows):
-            if int(row["ordinal"]) != ordinal:
-                defects.append(f"{prefix}_ORDINAL_MISMATCH:{ordinal}")
-            try:
-                material = json.loads(str(row["material_json"]))
-            except (TypeError, json.JSONDecodeError):
-                defects.append(f"{prefix}_MATERIAL_INVALID:{ordinal}")
-                continue
-            if not isinstance(material, dict):
-                defects.append(f"{prefix}_MATERIAL_INVALID:{ordinal}")
-                continue
-            actual.append(material)
-            if str(row[identifier_field]) != str(material.get(identifier_field)):
-                defects.append(f"{prefix}_ID_MISMATCH:{ordinal}")
-            if (
-                str(row["material_json"]) != canonical_json(material)
-                or str(row["material_sha256"]) != sha256_digest(material)
-            ):
-                defects.append(f"{prefix}_DIGEST_MISMATCH:{ordinal}")
-            if (
-                str(row["recorded_at"]) != record.admitted_at
-                or str(row["recorded_by"]) != record.admitted_by
-                or str(row["member_ledger_hash"]) != record.ledger_hash
-            ):
-                defects.append(f"{prefix}_PROVENANCE_MISMATCH:{ordinal}")
-        if actual != [dict(item) for item in expected]:
-            defects.append(f"{prefix}_MATERIAL_NOT_CURRENT")
-
     def verify_assessment(self, assessment_id: str) -> ReleaseCandidateVerification:
         assessment_id = self._text(assessment_id, "assessment_id")
         row = self.database.connection.execute(
@@ -1198,8 +1066,8 @@ class ReleaseCandidateService:
                 (parsed["release_gates"], "block19_rc_gates", "gate_id", "ASSESSMENT_GATE"),
             ):
                 assert isinstance(expected, list)
-                self._verify_membership(
-                    self.database,
+                C6RedTeamService._verify_memberships(
+                    self,
                     record,
                     expected,
                     table,
