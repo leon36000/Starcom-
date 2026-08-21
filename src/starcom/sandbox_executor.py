@@ -8,7 +8,8 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
-from typing import Any, Mapping
+import tempfile
+from typing import Mapping
 from urllib.parse import unquote, urlparse
 
 from .adoption_execution import C3AdoptionExecutionRecord, C3ExecutorResult, C3RollbackResult
@@ -18,6 +19,7 @@ from .errors import ConflictError, IntegrityError, StateTransitionError, Validat
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PROFILE = "starcom-local-component-v1"
+_MANIFEST_NAME = "component_manifest.json"
 _MANIFEST_FIELDS = frozenset({"component", "version", "files"})
 _FILE_FIELDS = frozenset({"path", "digest", "size"})
 _SAFE_TARGET = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -62,23 +64,20 @@ class SandboxComponentExecutor:
             raise ValidationError(f"{field} is not canonical or is reserved")
         return normalized
 
-    def _manifest(self) -> dict[str, object]:
+    def _read_manifest(self) -> Mapping[str, object]:
         if self.source_root is None:
             raise ValidationError("source_root must be explicitly configured")
         if not self.source_root.is_dir() or self.source_root.is_symlink():
             raise ValidationError("source_root must be a real directory")
-        manifest_path = self.source_root / "component_manifest.json"
+        manifest_path = self.source_root / _MANIFEST_NAME
         try:
-            value = parse_strict_json_object(
+            return parse_strict_json_object(
                 manifest_path.read_bytes(), max_bytes=1024 * 1024, label="component manifest"
             )
         except OSError as exc:
-            raise ValidationError("component_manifest.json could not be read") from exc
-        if frozenset(value) != _MANIFEST_FIELDS:
-            raise ValidationError("component manifest fields do not match the contract")
-        component = self._text(value["component"], "component")
-        version = self._text(value["version"], "version")
-        raw_files = value["files"]
+            raise ValidationError(f"{_MANIFEST_NAME} could not be read") from exc
+
+    def _parse_manifest_files(self, raw_files: object) -> list[dict[str, object]]:
         if not isinstance(raw_files, list) or not raw_files:
             raise ValidationError("component manifest files must be a non-empty list")
         files: list[dict[str, object]] = []
@@ -95,17 +94,19 @@ class SandboxComponentExecutor:
             files.append({"path": relative, "digest": digest, "size": size})
         if paths != sorted(paths) or len(paths) != len(set(paths)):
             raise ValidationError("component manifest files must be sorted and unique")
+        return files
+
+    def _actual_source_files(self) -> set[str]:
+        assert self.source_root is not None
         actual: set[str] = set()
         for path in self.source_root.rglob("*"):
             if path.is_symlink():
                 raise ValidationError("source tree must not contain symlinks")
-            if path.is_file() and path.name != "component_manifest.json":
+            if path.is_file() and path.name != _MANIFEST_NAME:
                 actual.add(path.relative_to(self.source_root).as_posix())
-        if actual != set(paths):
-            raise ValidationError(
-                "component manifest does not exactly cover source files",
-                {"missing": sorted(set(paths) - actual), "unexpected": sorted(actual - set(paths))},
-            )
+        return actual
+
+    def _verify_manifest_files(self, files: list[dict[str, object]]) -> None:
         for item in files:
             path = self._source_file(item["path"])
             if not path.is_file() or path.is_symlink():
@@ -113,6 +114,22 @@ class SandboxComponentExecutor:
             content = path.read_bytes()
             if len(content) != item["size"] or hashlib.sha256(content).hexdigest() != item["digest"]:
                 raise IntegrityError(f"manifest digest or size mismatch: {item['path']}")
+
+    def _manifest(self) -> dict[str, object]:
+        value = self._read_manifest()
+        if frozenset(value) != _MANIFEST_FIELDS:
+            raise ValidationError("component manifest fields do not match the contract")
+        component = self._text(value["component"], "component")
+        version = self._text(value["version"], "version")
+        files = self._parse_manifest_files(value["files"])
+        paths = {str(item["path"]) for item in files}
+        actual = self._actual_source_files()
+        if actual != set(paths):
+            raise ValidationError(
+                "component manifest does not exactly cover source files",
+                {"missing": sorted(paths - actual), "unexpected": sorted(actual - paths)},
+            )
+        self._verify_manifest_files(files)
         return {"component": component, "version": version, "files": files}
 
     def _source_file(self, relative: object, field: str = "path") -> Path:
@@ -213,9 +230,17 @@ class SandboxComponentExecutor:
     @staticmethod
     def _write_atomic(path: Path, content: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.staging")
-        temporary.write_bytes(content)
-        os.replace(temporary, path)
+        descriptor, temporary = tempfile.mkstemp(prefix=".starcom-atomic-", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(content)
+            os.replace(temporary, path)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise
 
     def _load_journal(self, key: str) -> dict[str, object] | None:
         path = self._journal_path(key)
@@ -310,14 +335,7 @@ class SandboxComponentExecutor:
                 shutil.rmtree(staging)
             raise
 
-    def rollback(
-        self,
-        request: C3AdoptionExecutionRecord,
-        execution_result: C3ExecutorResult | None,
-        reason: str,
-    ) -> C3RollbackResult:
-        reason = self._text(reason, "reason")
-        self._ensure_sandbox_root()
+    def _rollback_plan(self, request: C3AdoptionExecutionRecord) -> Mapping[str, object]:
         if request.executor_id != self.executor_id:
             raise StateTransitionError("execution request targets another executor")
         plan = request.execution_plan
@@ -326,29 +344,50 @@ class SandboxComponentExecutor:
         self._source_from_plan(plan.get("component_ref"))
         if plan.get("sandbox_profile") != _PROFILE or plan.get("requires_network") is not False:
             raise ValidationError("sandbox rollback requires the local no-network profile")
+        return plan
+
+    @staticmethod
+    def _rollback_from_journal(value: Mapping[str, object]) -> C3RollbackResult | None:
+        if value.get("state") != "ROLLED_BACK":
+            return None
+        rollback = value.get("rollback_result")
+        if not isinstance(rollback, dict):
+            raise IntegrityError("sandbox rollback journal is invalid")
+        return C3RollbackResult(
+            succeeded=bool(rollback["succeeded"]),
+            restored_state_digest=(str(rollback["restored_state_digest"]) if rollback.get("restored_state_digest") else None),
+            receipt=dict(rollback["receipt"]),
+            error=(str(rollback["error"]) if rollback.get("error") else None),
+        )
+
+    def _restore_previous(self, previous: bytes | None) -> None:
+        if previous is None:
+            if self._current.exists():
+                self._current.unlink()
+            return
+        self._write_atomic(self._current, previous)
+
+    def rollback(
+        self,
+        request: C3AdoptionExecutionRecord,
+        _execution_result: C3ExecutorResult | None,
+        reason: str,
+    ) -> C3RollbackResult:
+        reason = self._text(reason, "reason")
+        self._ensure_sandbox_root()
+        plan = self._rollback_plan(request)
         journal = self._load_journal(request.idempotency_key)
         if journal is None:
             return C3RollbackResult(False, None, {"executor_id": self.executor_id, "reason": reason}, "execution journal not found")
         fingerprint = sha256_digest({"execution_id": request.execution_id, "plan": dict(plan)})
         if journal.get("fingerprint") != fingerprint:
             raise ConflictError("idempotency key binds different sandbox material")
-        if journal.get("state") == "ROLLED_BACK":
-            rollback = journal.get("rollback_result")
-            if not isinstance(rollback, dict):
-                raise IntegrityError("sandbox rollback journal is invalid")
-            return C3RollbackResult(
-                succeeded=bool(rollback["succeeded"]),
-                restored_state_digest=(str(rollback["restored_state_digest"]) if rollback.get("restored_state_digest") else None),
-                receipt=dict(rollback["receipt"]),
-                error=(str(rollback["error"]) if rollback.get("error") else None),
-            )
+        replay = self._rollback_from_journal(journal)
+        if replay is not None:
+            return replay
         previous_encoded = journal.get("previous_current_base64")
         previous = base64.b64decode(previous_encoded) if isinstance(previous_encoded, str) else None
-        if previous is None:
-            if self._current.exists():
-                self._current.unlink()
-        else:
-            self._write_atomic(self._current, previous)
+        self._restore_previous(previous)
         restored = self._state_digest(previous)
         result = C3RollbackResult(
             succeeded=True,
