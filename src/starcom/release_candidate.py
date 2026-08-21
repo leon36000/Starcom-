@@ -918,20 +918,17 @@ class ReleaseCandidateService:
                     actor=actor,
                     occurred_at=admitted_at,
                 )
-                values: list[object] = []
-                for field in columns:
-                    if field == "independence_basis_json":
-                        values.append(canonical_json(dict(provisional.independence_basis)))
-                    elif field == "payload":
-                        values.append(sqlite3.Binary(provisional.payload))
-                    elif field == "signature":
-                        values.append(sqlite3.Binary(provisional.signature))
-                    elif field == "ledger_event_id":
-                        values.append(receipt.event_id)
-                    elif field == "ledger_hash":
-                        values.append(receipt.record_hash)
-                    else:
-                        values.append(getattr(provisional, field))
+                overrides: dict[str, object] = {
+                    "independence_basis_json": canonical_json(dict(provisional.independence_basis)),
+                    "payload": sqlite3.Binary(provisional.payload),
+                    "signature": sqlite3.Binary(provisional.signature),
+                    "ledger_event_id": receipt.event_id,
+                    "ledger_hash": receipt.record_hash,
+                }
+                values = [
+                    overrides[field] if field in overrides else getattr(provisional, field)
+                    for field in columns
+                ]
                 placeholders = ",".join("?" for _ in columns)
                 connection.execute(
                     f"INSERT INTO block19_rc_assessments ({','.join(columns)}) VALUES ({placeholders})",
