@@ -48,6 +48,10 @@ EXPECTED_AUTHORITIES = {
         "starcom.release_candidate",
         "ReleaseCandidateService",
     ),
+    "19.external_evidence": (
+        "starcom.external_evidence",
+        "ExternalEvidenceService",
+    ),
 }
 
 
