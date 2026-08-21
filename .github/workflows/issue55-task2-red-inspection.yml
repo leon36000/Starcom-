@@ -1,0 +1,62 @@
+name: STARCOM Issue 55 Task2 causal RED inspection
+
+on:
+  push:
+    branches:
+      - chatgpt/validation-issue55-task2-13dc9c3f-20260819
+  pull_request:
+    branches:
+      - main
+    paths:
+      - scripts/inspect_issue55_task2_red.py
+      - .github/workflows/issue55-task2-red-inspection.yml
+      - tests/test_architecture_review.py
+      - src/starcom/architecture_review.py
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: issue55-red-inspection-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inspect-causal-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Inspect and execute exact failing test
+        run: python scripts/inspect_issue55_task2_red.py
+      - name: Publish exact source and traceback on validation PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          {
+            echo '<!-- starcom-issue55-task2-red-inspection -->'
+            echo '## STARCOM Issue #55 Task2 — causal RED inspection'
+            echo
+            echo "- Head: \`$HEAD_SHA\`"
+            echo "- Run: $RUN_URL"
+            echo
+            echo '```json'
+            if [ -f issue55_task2_red_inspection.json ]; then
+              cat issue55_task2_red_inspection.json
+            else
+              echo '{"result":"HARNESS_ERROR","reason":"inspection artifact missing"}'
+            fi
+            echo '```'
+            echo
+            echo '**Validation only — do not merge.**'
+          } > issue55_red_comment.md
+          gh pr comment "$PR_NUMBER" --body-file issue55_red_comment.md
