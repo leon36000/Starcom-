@@ -63,6 +63,13 @@ class CountingRegistry:
 
 
 class C3ExecutorWorkerAttestationTests(unittest.TestCase):
+    registry_executor_id = AttestedExecutor.executor_id
+    registry_implementation_version = IMPLEMENTATION_VERSION
+    registry_implementation_digest = IMPLEMENTATION_DIGEST
+    registry_artifact_digest = ARTIFACT_DIGEST
+    registry_entrypoint = "tests.test_executor_worker_attestation:AttestedExecutor"
+    registry_profile = "starcom-c3-default-deny-v1"
+
     @classmethod
     def setUpClass(cls) -> None:
         fixture = execution_fixture.C3AdoptionExecutionTests
@@ -129,16 +136,16 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
         self.runtime.close()
         self.tempdir.cleanup()
 
-    @staticmethod
-    def descriptor() -> dict[str, object]:
+    @classmethod
+    def descriptor(cls) -> dict[str, object]:
         return {
-            "executor_id": AttestedExecutor.executor_id,
+            "executor_id": cls.registry_executor_id,
             "implementation_name": "Attested deterministic fake executor",
-            "implementation_version": IMPLEMENTATION_VERSION,
-            "implementation_digest": IMPLEMENTATION_DIGEST,
-            "artifact_digest": ARTIFACT_DIGEST,
-            "entrypoint": "tests.test_executor_worker_attestation:AttestedExecutor",
-            "supported_sandbox_profiles": ["starcom-c3-default-deny-v1"],
+            "implementation_version": cls.registry_implementation_version,
+            "implementation_digest": cls.registry_implementation_digest,
+            "artifact_digest": cls.registry_artifact_digest,
+            "entrypoint": cls.registry_entrypoint,
+            "supported_sandbox_profiles": [cls.registry_profile],
             "network_mode": "DENY",
             "capabilities": ["apply", "rollback"],
         }
@@ -178,14 +185,14 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
     def qualification_payload(self, descriptor_digest: str) -> bytes:
         value = {
             "qualification_id": "qualification-worker-executor",
-            "executor_id": AttestedExecutor.executor_id,
+            "executor_id": self.registry_executor_id,
             "descriptor_digest": descriptor_digest,
             "report_digest": REPORT_DIGEST,
             "test_suite_digest": TEST_SUITE_DIGEST,
             "reviewer_identity": "independent-worker-reviewer",
             "reviewer_environment": "isolated-worker-review-vm",
             "independence_basis": "separate process, key and workspace",
-            "sandbox_profiles_tested": ["starcom-c3-default-deny-v1"],
+            "sandbox_profiles_tested": [self.registry_profile],
             "network_mode_tested": "DENY",
             "verdict": "QUALIFIED",
             "qualified_at": W3,
@@ -254,11 +261,11 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
             occurred_at=W2,
         )
 
-        registered = self.registry.get_descriptor(AttestedExecutor.executor_id)
+        registered = self.registry.get_descriptor(self.registry_executor_id)
         payload = self.qualification_payload(registered.descriptor_digest)
         signature = self.sign(payload)
         qualification = self.registry.prepare_qualification(
-            AttestedExecutor.executor_id,
+            self.registry_executor_id,
             "worker-qualifier-key",
             payload,
             signature,
@@ -270,7 +277,7 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
             now=W3,
         )
         self.registry.qualify(
-            AttestedExecutor.executor_id,
+            self.registry_executor_id,
             "worker-qualifier-key",
             payload,
             signature,
@@ -281,7 +288,7 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
         if state is C3ExecutorState.QUALIFIED_DISABLED:
             return
 
-        enable = self.registry.prepare_enable(AttestedExecutor.executor_id)
+        enable = self.registry.prepare_enable(self.registry_executor_id)
         enable_decision = self.authorize(
             enable,
             subject="executor-enabler",
@@ -289,7 +296,7 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
             now=W4,
         )
         self.registry.enable(
-            AttestedExecutor.executor_id,
+            self.registry_executor_id,
             authorization_decision_id=enable_decision.decision_id,
             actor="executor-enabler",
             occurred_at=W4,
@@ -313,7 +320,7 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
         occurred_at: str,
     ) -> None:
         preparation = self.registry.prepare_revoke(
-            AttestedExecutor.executor_id,
+            self.registry_executor_id,
             reason=reason,
         )
         decision = self.authorize(
@@ -323,7 +330,7 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
             now=decision_time,
         )
         self.registry.revoke(
-            AttestedExecutor.executor_id,
+            self.registry_executor_id,
             reason=reason,
             authorization_decision_id=decision.decision_id,
             actor="security-owner",
@@ -334,10 +341,11 @@ class C3ExecutorWorkerAttestationTests(unittest.TestCase):
         self,
         *,
         execution_id: str,
-        executor_id: str = AttestedExecutor.executor_id,
+        executor_id: str | None = None,
         plan: dict[str, object] | None = None,
     ):
         execution_plan = plan or execution_fixture.C3AdoptionExecutionTests.execution_plan()
+        executor_id = executor_id or self.registry_executor_id
         preparation = self.service.prepare(
             execution_id,
             adoption_id="adoption-cli",
