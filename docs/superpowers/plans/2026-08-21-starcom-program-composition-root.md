@@ -145,7 +145,7 @@ Drop `cockpit_snapshots` in a temporary in-memory program and assert `SCHEMA_TAB
 Run:
 
 ~~~bash
-PYTHONPATH=src:. python3 -m unittest tests.test_program -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_program.py' -v
 ~~~
 
 Expected result: collection or test failures because `starcom.program` and `StarcomProgram` do not exist yet. Do not weaken the tests to make this initial run pass.
@@ -292,7 +292,7 @@ Do not change the version or canonical status strings.
 Run:
 
 ~~~bash
-PYTHONPATH=src:. python3 -m unittest tests.test_program -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_program.py' -v
 ~~~
 
 Expected result: all construction, catalog, identity, dependency, lifecycle, safety, and compatibility tests pass.
@@ -333,7 +333,8 @@ Keep imports that CLI handlers still use directly, including command payload typ
 Run:
 
 ~~~bash
-PYTHONPATH=src:. python3 -m unittest tests.test_cli tests.test_smoke -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_cli.py' -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_smoke.py' -v
 ~~~
 
 Expected result: all existing CLI commands continue to create the same database schemas and return the same JSON behavior, while `Runtime.open` resolves to `StarcomProgram.open`.
@@ -414,7 +415,7 @@ Check only `dir(self)` for forbidden root operation names and emit `FORBIDDEN_RO
 Run:
 
 ~~~bash
-PYTHONPATH=src:. python3 -m unittest tests.test_program -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_program.py' -v
 python3 -m compileall -q src/starcom/program.py tests/test_program.py
 ~~~
 
@@ -440,8 +441,10 @@ git commit -m "feat: add cross-block program verifier"
 - [ ] **Step 1: Run focused and compatibility tests**
 
 ~~~bash
-PYTHONPATH=src:. python3 -m unittest tests.test_program tests.test_cli tests.test_smoke -v
-python3 -W error -m unittest tests.test_program -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_program.py' -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_cli.py' -v
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_smoke.py' -v
+python3 -W error -m unittest discover -s tests -p 'test_program.py' -v
 ~~~
 
 Expected result: zero failures and zero warnings promoted to errors.
@@ -469,7 +472,8 @@ Expected result: manifest, repository policy, text style, secret scan, and verif
 
 ~~~bash
 for seed in 0 1 42; do
-  PYTHONHASHSEED="$seed" PYTHONPATH=src:. python3 -m unittest tests.test_program tests.test_cli -q
+  PYTHONHASHSEED="$seed" PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_program.py' -q
+  PYTHONHASHSEED="$seed" PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_cli.py' -q
 done
 ~~~
 
@@ -529,7 +533,9 @@ Fetch the merged PR and issue #70. Confirm `merged=true`, base `main`, and the m
 git -C /home/pc1/STARCOM fetch origin main
 git -C /home/pc1/STARCOM merge --ff-only origin/main
 git -C /home/pc1/STARCOM status --short --branch
-PYTHONPATH=src:. python3 -m unittest tests.test_program tests.test_cli tests.test_smoke -q
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_program.py' -q
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_cli.py' -q
+PYTHONPATH=src:. python3 -m unittest discover -s tests -p 'test_smoke.py' -q
 PYTHONPATH=src:. python3 scripts/verify_repo.py
 ~~~
 
