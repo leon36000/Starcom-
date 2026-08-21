@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 import json
 import os
 from pathlib import Path
@@ -11,46 +11,23 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from . import __version__
-from .adoption import C3AdoptionService
-from .adoption_execution import C3AdoptionExecutionService
-from .architecture_candidate import C4ArchitectureCandidateService
-from .architecture_input import C4ArchitectureInputService
-from .architecture_publication import C4ArchitecturePublicationService
-from .architecture_review import C4ArchitectureReviewService
-from .architecture import C4ArchitectureService
 from .canonical import canonical_json
-from .census import C2CensusService
-from .certification import C2CertificationService
-from .continuity import ContinuityService
-from .cockpit import CockpitService
-from .creative import CreativeJobService
-from .db import Database
-from .deployment import DeploymentFabricService
-from .durable import DurableOutbox
 from .errors import StarcomError, ValidationError
-from .execution_plan import C5ExecutionPlanService
-from .executor_registry import C3ExecutorRegistry
-from .final_pack import C7FinalPackService
-from .ledger import EventLedger
-from .mission import MissionKernel, MissionState
-from .proof import ProofEngine, VerificationVerdict
-from .qualification import QualificationArtifactKind, QualificationLab
-from .qualification_decision import C3DecisionService
-from .qualification_gate import C3QualificationGate
-from .recollection import C2RecollectionService
-from .red_team import C6RedTeamService
-from .release_candidate import ReleaseCandidateService
-from .research import ReceiptOutcome, ResearchCampaign
-from .research_marathon import ResearchMarathonService
+from .mission import MissionState
+from .proof import VerificationVerdict
+from .qualification import QualificationArtifactKind
+from .research import ReceiptOutcome
+from .program import StarcomProgram
 from .trust import (
     AuthorizationRequest,
     PolicyEffect,
     PolicyRule,
-    TrustPlane,
 )
 
 
 Handler = Callable[["Runtime", argparse.Namespace], tuple[Any, int]]
+
+Runtime = StarcomProgram
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -58,252 +35,6 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> None:
         raise ValidationError("invalid command arguments", {"reason": message})
-
-
-@dataclass
-class Runtime:
-    database: Database
-    ledger: EventLedger
-    trust: TrustPlane
-    proof: ProofEngine
-    missions: MissionKernel
-    research: ResearchCampaign
-    continuity: ContinuityService
-    recollection: C2RecollectionService
-    census: C2CensusService
-    certification: C2CertificationService
-    qualification: QualificationLab
-    c3: C3QualificationGate
-    c3_decision: C3DecisionService
-    adoption: C3AdoptionService
-    outbox: DurableOutbox
-    adoption_execution: C3AdoptionExecutionService
-    executor_registry: C3ExecutorRegistry
-    architecture_input: C4ArchitectureInputService
-    architecture_candidate: C4ArchitectureCandidateService
-    architecture_review: C4ArchitectureReviewService
-    architecture_publication: C4ArchitecturePublicationService
-    architecture: C4ArchitectureService
-    execution_plan: C5ExecutionPlanService
-    red_team: C6RedTeamService
-    final_pack: C7FinalPackService
-    research_marathon: ResearchMarathonService
-    creative_jobs: CreativeJobService
-    cockpit: CockpitService
-    deployment: DeploymentFabricService
-    release_candidate: ReleaseCandidateService
-
-    @property
-    def architecture_baseline(self) -> C4ArchitectureService:
-        return self.architecture
-
-    @property
-    def c5_execution_plan(self) -> C5ExecutionPlanService:
-        return self.execution_plan
-
-    @property
-    def c6_red_team(self) -> C6RedTeamService:
-        return self.red_team
-
-    @property
-    def c7_final_pack(self) -> C7FinalPackService:
-        return self.final_pack
-
-    @property
-    def creative(self) -> CreativeJobService:
-        return self.creative_jobs
-
-    @property
-    def rc_assessment(self) -> ReleaseCandidateService:
-        return self.release_candidate
-
-    @classmethod
-    def open(cls, path: str) -> "Runtime":
-        database = Database(path)
-        try:
-            database.initialize()
-            ledger = EventLedger(database)
-            trust = TrustPlane(database, ledger)
-            proof = ProofEngine(database, ledger)
-            missions = MissionKernel(database, ledger, trust, proof)
-            research = ResearchCampaign(database, ledger)
-            continuity = ContinuityService(database, ledger, trust)
-            recollection = C2RecollectionService(database, ledger, continuity, research)
-            census = C2CensusService(database, ledger, recollection, research)
-            certification = C2CertificationService(
-                database,
-                ledger,
-                continuity,
-                recollection,
-                census,
-            )
-            qualification = QualificationLab(database, ledger)
-            c3 = C3QualificationGate(
-                database,
-                ledger,
-                certification,
-                qualification,
-            )
-            c3_decision = C3DecisionService(
-                database,
-                ledger,
-                continuity,
-                certification,
-                c3,
-                qualification,
-            )
-            adoption = C3AdoptionService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                c3_decision,
-                qualification,
-            )
-            outbox = DurableOutbox(database, ledger)
-            adoption_execution = C3AdoptionExecutionService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                adoption,
-                outbox,
-            )
-            executor_registry = C3ExecutorRegistry(
-                database,
-                ledger,
-                trust,
-                continuity,
-            )
-            architecture_input = C4ArchitectureInputService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                adoption_execution,
-            )
-            architecture_candidate = C4ArchitectureCandidateService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                architecture_input,
-            )
-            architecture_review = C4ArchitectureReviewService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                architecture_input,
-                architecture_candidate,
-            )
-            architecture_publication = C4ArchitecturePublicationService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                architecture_input,
-                architecture_candidate,
-                architecture_review,
-            )
-            architecture = C4ArchitectureService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                c3_decision,
-                adoption,
-                adoption_execution,
-            )
-            execution_plan = C5ExecutionPlanService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                architecture,
-            )
-            red_team = C6RedTeamService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                execution_plan,
-            )
-            final_pack = C7FinalPackService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                architecture,
-                execution_plan,
-                red_team,
-            )
-            research_marathon = ResearchMarathonService(
-                database,
-                ledger,
-                trust,
-                continuity,
-                final_pack,
-                research,
-                outbox,
-            )
-            creative_jobs = CreativeJobService(
-                database,
-                ledger,
-                trust,
-                outbox,
-            )
-            cockpit = CockpitService(database, ledger, trust)
-            deployment = DeploymentFabricService(
-                database,
-                ledger,
-                trust,
-                continuity,
-            )
-            release_candidate = ReleaseCandidateService(
-                database,
-                ledger,
-                trust,
-                continuity,
-            )
-            return cls(
-                database,
-                ledger,
-                trust,
-                proof,
-                missions,
-                research,
-                continuity,
-                recollection,
-                census,
-                certification,
-                qualification,
-                c3,
-                c3_decision,
-                adoption,
-                outbox,
-                adoption_execution,
-                executor_registry,
-                architecture_input,
-                architecture_candidate,
-                architecture_review,
-                architecture_publication,
-                architecture,
-                execution_plan,
-                red_team,
-                final_pack,
-                research_marathon,
-                creative_jobs,
-                cockpit,
-                deployment,
-                release_candidate,
-            )
-        except BaseException:
-            database.close()
-            raise
-
-    def close(self) -> None:
-        self.database.close()
 
 
 def _database_path(raw: str) -> str:
