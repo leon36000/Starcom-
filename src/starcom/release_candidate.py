@@ -78,6 +78,12 @@ _RED_TEAM_FIELDS = frozenset(
     {"case_id", "category", "severity", "outcome", "evidence_digest"}
 )
 _GATE_FIELDS = frozenset({"gate_id", "status", "evidence_digest"})
+_MEMBERSHIP_SPECS = (
+    ("block19_rc_evidence", "evidence_id", "evidence_manifest"),
+    ("block19_rc_benchmarks", "benchmark_id", "benchmarks"),
+    ("block19_rc_red_team_cases", "case_id", "red_team_cases"),
+    ("block19_rc_gates", "gate_id", "release_gates"),
+)
 
 
 @dataclass(frozen=True)
@@ -346,139 +352,131 @@ class ReleaseCandidateService:
         return value
 
     @classmethod
-    def _parse_evidence_manifest(cls, raw: object) -> list[dict[str, object]]:
+    def _parse_ordered_members(
+        cls,
+        raw: object,
+        label: str,
+        fields: frozenset[str],
+        identifier_field: str,
+        normalizer: Any,
+    ) -> list[dict[str, object]]:
         if not isinstance(raw, list) or not raw:
-            raise ValidationError("evidence_manifest must be a non-empty list")
+            raise ValidationError(f"{label} must be a non-empty list")
         normalized: list[dict[str, object]] = []
         identifiers: list[str] = []
         for ordinal, entry in enumerate(raw):
-            if not isinstance(entry, dict) or frozenset(entry) != _EVIDENCE_FIELDS:
-                raise ValidationError(f"evidence_manifest[{ordinal}] fields do not match the contract")
-            item = dict(entry)
-            evidence_id = cls._text(item["evidence_id"], f"evidence_manifest[{ordinal}].evidence_id")
-            artifact_id = cls._text(item["artifact_id"], f"evidence_manifest[{ordinal}].artifact_id")
-            digest = cls._digest(item["digest"], f"evidence_manifest[{ordinal}].digest")
-            status = cls._text(item["status"], f"evidence_manifest[{ordinal}].status")
-            if status not in _EXTERNAL_STATUSES:
-                raise ValidationError("evidence manifest status is outside the closed status set")
-            identifiers.append(evidence_id)
-            normalized.append(
-                {
-                    "evidence_id": evidence_id,
-                    "artifact_id": artifact_id,
-                    "digest": digest,
-                    "status": status,
-                }
-            )
+            if not isinstance(entry, dict) or frozenset(entry) != fields:
+                raise ValidationError(f"{label}[{ordinal}] fields do not match the contract")
+            item = normalizer(dict(entry), f"{label}[{ordinal}]")
+            identifiers.append(str(item[identifier_field]))
+            normalized.append(item)
         if identifiers != sorted(identifiers) or len(set(identifiers)) != len(identifiers):
-            raise ValidationError("evidence manifest IDs must be sorted and unique")
-        if tuple(identifiers) != _REQUIRED_EVIDENCE_IDS:
+            raise ValidationError(f"{label} IDs must be sorted and unique")
+        return normalized
+
+    @classmethod
+    def _normalize_evidence(
+        cls, item: dict[str, object], prefix: str
+    ) -> dict[str, object]:
+        evidence_id = cls._text(item["evidence_id"], f"{prefix}.evidence_id")
+        artifact_id = cls._text(item["artifact_id"], f"{prefix}.artifact_id")
+        digest = cls._digest(item["digest"], f"{prefix}.digest")
+        status = cls._text(item["status"], f"{prefix}.status")
+        if status not in _EXTERNAL_STATUSES:
+            raise ValidationError("evidence manifest status is outside the closed status set")
+        return {
+            "evidence_id": evidence_id,
+            "artifact_id": artifact_id,
+            "digest": digest,
+            "status": status,
+        }
+
+    @classmethod
+    def _normalize_benchmark(
+        cls, item: dict[str, object], prefix: str
+    ) -> dict[str, object]:
+        benchmark_id = cls._text(item["benchmark_id"], f"{prefix}.benchmark_id")
+        domain = cls._text(item["domain"], f"{prefix}.domain")
+        metric = cls._text(item["metric"], f"{prefix}.metric")
+        unit = cls._text(item["unit"], f"{prefix}.unit")
+        threshold = cls._number(item["threshold"], f"{prefix}.threshold")
+        observed = cls._number(item["observed"], f"{prefix}.observed")
+        direction = cls._text(item["direction"], f"{prefix}.direction")
+        if direction not in _DIRECTIONS:
+            raise ValidationError("benchmark direction is outside the closed set")
+        passed = item["pass"]
+        if not isinstance(passed, bool):
+            raise ValidationError(f"{prefix}.pass must be boolean")
+        expected = observed >= threshold if direction == "MINIMUM" else observed <= threshold
+        if passed != expected:
+            raise ValidationError("benchmark pass is inconsistent with its numeric direction")
+        evidence_digest = cls._digest(item["evidence_digest"], f"{prefix}.evidence_digest")
+        return {
+            "benchmark_id": benchmark_id,
+            "domain": domain,
+            "metric": metric,
+            "unit": unit,
+            "threshold": threshold,
+            "observed": observed,
+            "direction": direction,
+            "pass": passed,
+            "evidence_digest": evidence_digest,
+        }
+
+    @classmethod
+    def _normalize_red_team(
+        cls, item: dict[str, object], prefix: str
+    ) -> dict[str, object]:
+        case_id = cls._text(item["case_id"], f"{prefix}.case_id")
+        category = cls._text(item["category"], f"{prefix}.category")
+        severity = cls._text(item["severity"], f"{prefix}.severity")
+        outcome = cls._text(item["outcome"], f"{prefix}.outcome")
+        if outcome not in _OUTCOMES:
+            raise ValidationError("red-team outcome is outside the closed set")
+        evidence_digest = cls._digest(item["evidence_digest"], f"{prefix}.evidence_digest")
+        return {
+            "case_id": case_id,
+            "category": category,
+            "severity": severity,
+            "outcome": outcome,
+            "evidence_digest": evidence_digest,
+        }
+
+    @classmethod
+    def _normalize_gate(cls, item: dict[str, object], prefix: str) -> dict[str, object]:
+        gate_id = cls._text(item["gate_id"], f"{prefix}.gate_id")
+        status = cls._text(item["status"], f"{prefix}.status")
+        if status not in _OUTCOMES:
+            raise ValidationError("release gate status is outside the closed set")
+        evidence_digest = cls._digest(item["evidence_digest"], f"{prefix}.evidence_digest")
+        return {"gate_id": gate_id, "status": status, "evidence_digest": evidence_digest}
+
+    @classmethod
+    def _parse_evidence_manifest(cls, raw: object) -> list[dict[str, object]]:
+        normalized = cls._parse_ordered_members(
+            raw, "evidence_manifest", _EVIDENCE_FIELDS, "evidence_id", cls._normalize_evidence
+        )
+        if tuple(item["evidence_id"] for item in normalized) != _REQUIRED_EVIDENCE_IDS:
             raise ValidationError("evidence manifest must contain exactly blocks 12A through 18")
         return normalized
 
     @classmethod
     def _parse_benchmarks(cls, raw: object) -> list[dict[str, object]]:
-        if not isinstance(raw, list) or not raw:
-            raise ValidationError("benchmarks must be a non-empty list")
-        normalized: list[dict[str, object]] = []
-        identifiers: list[str] = []
-        for ordinal, entry in enumerate(raw):
-            if not isinstance(entry, dict) or frozenset(entry) != _BENCHMARK_FIELDS:
-                raise ValidationError(f"benchmarks[{ordinal}] fields do not match the contract")
-            item = dict(entry)
-            benchmark_id = cls._text(item["benchmark_id"], f"benchmarks[{ordinal}].benchmark_id")
-            domain = cls._text(item["domain"], f"benchmarks[{ordinal}].domain")
-            metric = cls._text(item["metric"], f"benchmarks[{ordinal}].metric")
-            unit = cls._text(item["unit"], f"benchmarks[{ordinal}].unit")
-            threshold = cls._number(item["threshold"], f"benchmarks[{ordinal}].threshold")
-            observed = cls._number(item["observed"], f"benchmarks[{ordinal}].observed")
-            direction = cls._text(item["direction"], f"benchmarks[{ordinal}].direction")
-            if direction not in _DIRECTIONS:
-                raise ValidationError("benchmark direction is outside the closed set")
-            passed = item["pass"]
-            if not isinstance(passed, bool):
-                raise ValidationError(f"benchmarks[{ordinal}].pass must be boolean")
-            expected = observed >= threshold if direction == "MINIMUM" else observed <= threshold
-            if passed != expected:
-                raise ValidationError("benchmark pass is inconsistent with its numeric direction")
-            evidence_digest = cls._digest(
-                item["evidence_digest"], f"benchmarks[{ordinal}].evidence_digest"
-            )
-            identifiers.append(benchmark_id)
-            normalized.append(
-                {
-                    "benchmark_id": benchmark_id,
-                    "domain": domain,
-                    "metric": metric,
-                    "unit": unit,
-                    "threshold": threshold,
-                    "observed": observed,
-                    "direction": direction,
-                    "pass": passed,
-                    "evidence_digest": evidence_digest,
-                }
-            )
-        if identifiers != sorted(identifiers) or len(set(identifiers)) != len(identifiers):
-            raise ValidationError("benchmark IDs must be sorted and unique")
-        return normalized
+        return cls._parse_ordered_members(
+            raw, "benchmarks", _BENCHMARK_FIELDS, "benchmark_id", cls._normalize_benchmark
+        )
 
     @classmethod
     def _parse_red_team_cases(cls, raw: object) -> list[dict[str, object]]:
-        if not isinstance(raw, list) or not raw:
-            raise ValidationError("red_team_cases must be a non-empty list")
-        normalized: list[dict[str, object]] = []
-        identifiers: list[str] = []
-        for ordinal, entry in enumerate(raw):
-            if not isinstance(entry, dict) or frozenset(entry) != _RED_TEAM_FIELDS:
-                raise ValidationError(f"red_team_cases[{ordinal}] fields do not match the contract")
-            item = dict(entry)
-            case_id = cls._text(item["case_id"], f"red_team_cases[{ordinal}].case_id")
-            category = cls._text(item["category"], f"red_team_cases[{ordinal}].category")
-            severity = cls._text(item["severity"], f"red_team_cases[{ordinal}].severity")
-            outcome = cls._text(item["outcome"], f"red_team_cases[{ordinal}].outcome")
-            if outcome not in _OUTCOMES:
-                raise ValidationError("red-team outcome is outside the closed set")
-            evidence_digest = cls._digest(
-                item["evidence_digest"], f"red_team_cases[{ordinal}].evidence_digest"
-            )
-            identifiers.append(case_id)
-            normalized.append(
-                {
-                    "case_id": case_id,
-                    "category": category,
-                    "severity": severity,
-                    "outcome": outcome,
-                    "evidence_digest": evidence_digest,
-                }
-            )
-        if identifiers != sorted(identifiers) or len(set(identifiers)) != len(identifiers):
-            raise ValidationError("red-team case IDs must be sorted and unique")
-        return normalized
+        return cls._parse_ordered_members(
+            raw, "red_team_cases", _RED_TEAM_FIELDS, "case_id", cls._normalize_red_team
+        )
 
     @classmethod
     def _parse_gates(cls, raw: object) -> list[dict[str, object]]:
-        if not isinstance(raw, list) or not raw:
-            raise ValidationError("release_gates must be a non-empty list")
-        normalized: list[dict[str, object]] = []
-        identifiers: list[str] = []
-        for ordinal, entry in enumerate(raw):
-            if not isinstance(entry, dict) or frozenset(entry) != _GATE_FIELDS:
-                raise ValidationError(f"release_gates[{ordinal}] fields do not match the contract")
-            item = dict(entry)
-            gate_id = cls._text(item["gate_id"], f"release_gates[{ordinal}].gate_id")
-            status = cls._text(item["status"], f"release_gates[{ordinal}].status")
-            if status not in _OUTCOMES:
-                raise ValidationError("release gate status is outside the closed set")
-            evidence_digest = cls._digest(
-                item["evidence_digest"], f"release_gates[{ordinal}].evidence_digest"
-            )
-            identifiers.append(gate_id)
-            normalized.append(
-                {"gate_id": gate_id, "status": status, "evidence_digest": evidence_digest}
-            )
-        if identifiers != sorted(identifiers) or len(set(identifiers)) != len(identifiers):
-            raise ValidationError("release gate IDs must be sorted and unique")
-        return normalized
+        return cls._parse_ordered_members(
+            raw, "release_gates", _GATE_FIELDS, "gate_id", cls._normalize_gate
+        )
 
     @staticmethod
     def _external_material(value: Mapping[str, object]) -> dict[str, object]:
@@ -547,75 +545,25 @@ class ReleaseCandidateService:
                 )
                 """
             )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS block19_rc_evidence (
-                    assessment_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-                    evidence_id TEXT NOT NULL,
-                    artifact_id TEXT NOT NULL,
-                    material_json TEXT NOT NULL,
-                    material_sha256 TEXT NOT NULL CHECK (length(material_sha256) = 64),
-                    recorded_at TEXT NOT NULL,
-                    recorded_by TEXT NOT NULL,
-                    member_ledger_hash TEXT NOT NULL CHECK (length(member_ledger_hash) = 64),
-                    PRIMARY KEY (assessment_id, ordinal),
-                    UNIQUE (assessment_id, evidence_id),
-                    FOREIGN KEY (assessment_id) REFERENCES block19_rc_assessments(assessment_id)
+            for table, identifier, _ in _MEMBERSHIP_SPECS:
+                artifact_column = ", artifact_id TEXT NOT NULL" if table == "block19_rc_evidence" else ""
+                connection.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {table} (
+                        assessment_id TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+                        {identifier} TEXT NOT NULL{artifact_column},
+                        material_json TEXT NOT NULL,
+                        material_sha256 TEXT NOT NULL CHECK (length(material_sha256) = 64),
+                        recorded_at TEXT NOT NULL,
+                        recorded_by TEXT NOT NULL,
+                        member_ledger_hash TEXT NOT NULL CHECK (length(member_ledger_hash) = 64),
+                        PRIMARY KEY (assessment_id, ordinal),
+                        UNIQUE (assessment_id, {identifier}),
+                        FOREIGN KEY (assessment_id) REFERENCES block19_rc_assessments(assessment_id)
+                    )
+                    """
                 )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS block19_rc_benchmarks (
-                    assessment_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-                    benchmark_id TEXT NOT NULL,
-                    material_json TEXT NOT NULL,
-                    material_sha256 TEXT NOT NULL CHECK (length(material_sha256) = 64),
-                    recorded_at TEXT NOT NULL,
-                    recorded_by TEXT NOT NULL,
-                    member_ledger_hash TEXT NOT NULL CHECK (length(member_ledger_hash) = 64),
-                    PRIMARY KEY (assessment_id, ordinal),
-                    UNIQUE (assessment_id, benchmark_id),
-                    FOREIGN KEY (assessment_id) REFERENCES block19_rc_assessments(assessment_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS block19_rc_red_team_cases (
-                    assessment_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-                    case_id TEXT NOT NULL,
-                    material_json TEXT NOT NULL,
-                    material_sha256 TEXT NOT NULL CHECK (length(material_sha256) = 64),
-                    recorded_at TEXT NOT NULL,
-                    recorded_by TEXT NOT NULL,
-                    member_ledger_hash TEXT NOT NULL CHECK (length(member_ledger_hash) = 64),
-                    PRIMARY KEY (assessment_id, ordinal),
-                    UNIQUE (assessment_id, case_id),
-                    FOREIGN KEY (assessment_id) REFERENCES block19_rc_assessments(assessment_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS block19_rc_gates (
-                    assessment_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-                    gate_id TEXT NOT NULL,
-                    material_json TEXT NOT NULL,
-                    material_sha256 TEXT NOT NULL CHECK (length(material_sha256) = 64),
-                    recorded_at TEXT NOT NULL,
-                    recorded_by TEXT NOT NULL,
-                    member_ledger_hash TEXT NOT NULL CHECK (length(member_ledger_hash) = 64),
-                    PRIMARY KEY (assessment_id, ordinal),
-                    UNIQUE (assessment_id, gate_id),
-                    FOREIGN KEY (assessment_id) REFERENCES block19_rc_assessments(assessment_id)
-                )
-                """
-            )
             for table in (
                 "block19_rc_assessments",
                 "block19_rc_evidence",
@@ -1075,75 +1023,37 @@ class ReleaseCandidateService:
                     f"INSERT INTO block19_rc_assessments ({','.join(columns)}) VALUES ({placeholders})",
                     tuple(values),
                 )
-                for ordinal, material in enumerate(value["evidence_manifest"]):
-                    assert isinstance(material, dict)
-                    connection.execute(
-                        "INSERT INTO block19_rc_evidence "
-                        "(assessment_id,ordinal,evidence_id,artifact_id,material_json,material_sha256,"
-                        "recorded_at,recorded_by,member_ledger_hash) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (
-                            assessment_id,
-                            ordinal,
-                            material["evidence_id"],
-                            material["artifact_id"],
-                            canonical_json(material),
-                            sha256_digest(material),
-                            admitted_at,
-                            actor,
-                            receipt.record_hash,
-                        ),
-                    )
-                for ordinal, material in enumerate(value["benchmarks"]):
-                    assert isinstance(material, dict)
-                    connection.execute(
-                        "INSERT INTO block19_rc_benchmarks "
-                        "(assessment_id,ordinal,benchmark_id,material_json,material_sha256,"
-                        "recorded_at,recorded_by,member_ledger_hash) VALUES (?,?,?,?,?,?,?,?)",
-                        (
-                            assessment_id,
-                            ordinal,
-                            material["benchmark_id"],
-                            canonical_json(material),
-                            sha256_digest(material),
-                            admitted_at,
-                            actor,
-                            receipt.record_hash,
-                        ),
-                    )
-                for ordinal, material in enumerate(value["red_team_cases"]):
-                    assert isinstance(material, dict)
-                    connection.execute(
-                        "INSERT INTO block19_rc_red_team_cases "
-                        "(assessment_id,ordinal,case_id,material_json,material_sha256,"
-                        "recorded_at,recorded_by,member_ledger_hash) VALUES (?,?,?,?,?,?,?,?)",
-                        (
-                            assessment_id,
-                            ordinal,
-                            material["case_id"],
-                            canonical_json(material),
-                            sha256_digest(material),
-                            admitted_at,
-                            actor,
-                            receipt.record_hash,
-                        ),
-                    )
-                for ordinal, material in enumerate(value["release_gates"]):
-                    assert isinstance(material, dict)
-                    connection.execute(
-                        "INSERT INTO block19_rc_gates "
-                        "(assessment_id,ordinal,gate_id,material_json,material_sha256,"
-                        "recorded_at,recorded_by,member_ledger_hash) VALUES (?,?,?,?,?,?,?,?)",
-                        (
-                            assessment_id,
-                            ordinal,
-                            material["gate_id"],
-                            canonical_json(material),
-                            sha256_digest(material),
-                            admitted_at,
-                            actor,
-                            receipt.record_hash,
-                        ),
-                    )
+                for table, identifier, collection in _MEMBERSHIP_SPECS:
+                    members = value[collection]
+                    assert isinstance(members, list)
+                    for ordinal, material in enumerate(members):
+                        assert isinstance(material, dict)
+                        if table == "block19_rc_evidence":
+                            identifier_columns = f"{identifier},artifact_id"
+                            identifier_values: tuple[object, ...] = (
+                                material[identifier],
+                                material["artifact_id"],
+                            )
+                        else:
+                            identifier_columns = identifier
+                            identifier_values = (material[identifier],)
+                        material_json = canonical_json(material)
+                        connection.execute(
+                            f"INSERT INTO {table} "
+                            f"(assessment_id,ordinal,{identifier_columns},material_json,material_sha256,"
+                            "recorded_at,recorded_by,member_ledger_hash) "
+                            f"VALUES ({','.join('?' for _ in range(7 + len(identifier_values)))})",
+                            (
+                                assessment_id,
+                                ordinal,
+                                *identifier_values,
+                                material_json,
+                                sha256_digest(material),
+                                admitted_at,
+                                actor,
+                                receipt.record_hash,
+                            ),
+                        )
         except sqlite3.IntegrityError as exc:
             race = self.database.connection.execute(
                 "SELECT * FROM block19_rc_assessments "

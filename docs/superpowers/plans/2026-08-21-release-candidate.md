@@ -27,6 +27,6 @@ Spec: `docs/superpowers/specs/2026-08-21-release-candidate-design.md`
 
 - [x] Run focused, full, compile, secret, style, manifest, hash-seed and
   warnings-as-errors gates.
-- [ ] Push a review branch, merge the PR, confirm remote CI and close issue
+- [x] Push a review branch, merge the PR, confirm remote CI and close issue
   #69.
-- [ ] Produce a fresh source archive, SHA-256 and a French continuation report.
+- [x] Produce a fresh source archive, SHA-256 and a French continuation report.
