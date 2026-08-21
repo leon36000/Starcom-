@@ -22,6 +22,7 @@ from .canonical import canonical_json
 from .census import C2CensusService
 from .certification import C2CertificationService
 from .continuity import ContinuityService
+from .cockpit import CockpitService
 from .creative import CreativeJobService
 from .db import Database
 from .durable import DurableOutbox
@@ -86,6 +87,7 @@ class Runtime:
     final_pack: C7FinalPackService
     research_marathon: ResearchMarathonService
     creative_jobs: CreativeJobService
+    cockpit: CockpitService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
@@ -243,6 +245,7 @@ class Runtime:
                 trust,
                 outbox,
             )
+            cockpit = CockpitService(database, ledger, trust)
             return cls(
                 database,
                 ledger,
@@ -271,6 +274,7 @@ class Runtime:
                 final_pack,
                 research_marathon,
                 creative_jobs,
+                cockpit,
             )
         except BaseException:
             database.close()
