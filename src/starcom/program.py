@@ -23,6 +23,7 @@ from .db import Database
 from .deployment import DeploymentFabricService
 from .durable import DurableOutbox
 from .errors import NotFoundError, ValidationError
+from .external_evidence import ExternalEvidenceService
 from .execution_plan import C5ExecutionPlanService
 from .executor_registry import C3ExecutorRegistry
 from .final_pack import C7FinalPackService
@@ -282,6 +283,13 @@ _AUTHORITY_DESCRIPTORS = tuple(
                 "release_candidate",
                 ("database", "ledger", "trust", "continuity"),
             ),
+            AuthorityDescriptor(
+                "19.external_evidence",
+                "starcom.external_evidence",
+                "ExternalEvidenceService",
+                "external_evidence",
+                ("database", "ledger", "continuity"),
+            ),
         ),
         key=lambda descriptor: descriptor.name,
     )
@@ -300,6 +308,8 @@ _EXPECTED_SCHEMA_TABLES = frozenset(
         "block19_rc_evidence",
         "block19_rc_gates",
         "block19_rc_red_team_cases",
+        "external_evidence_items",
+        "external_evidence_records",
         "c2_census_identities",
         "c2_certification_members",
         "c2_certifications",
@@ -407,6 +417,7 @@ class StarcomProgram:
     cockpit: CockpitService
     deployment: DeploymentFabricService
     release_candidate: ReleaseCandidateService
+    external_evidence: ExternalEvidenceService
     _components: Mapping[str, object] = field(init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -644,6 +655,11 @@ class StarcomProgram:
                 signature_verifier=signature_verifier,
             )
             components["release_candidate"] = release_candidate
+            external_evidence = ExternalEvidenceService(
+                *dependencies("19.external_evidence", ("database", "ledger", "continuity")),
+                signature_verifier=signature_verifier,
+            )
+            components["external_evidence"] = external_evidence
             return cls(
                 database=database,
                 ledger=ledger,
@@ -675,6 +691,7 @@ class StarcomProgram:
                 cockpit=cockpit,
                 deployment=deployment,
                 release_candidate=release_candidate,
+                external_evidence=external_evidence,
             )
         except BaseException:
             database.close()
