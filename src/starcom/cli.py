@@ -39,6 +39,7 @@ from .qualification_decision import C3DecisionService
 from .qualification_gate import C3QualificationGate
 from .recollection import C2RecollectionService
 from .red_team import C6RedTeamService
+from .release_candidate import ReleaseCandidateService
 from .research import ReceiptOutcome, ResearchCampaign
 from .research_marathon import ResearchMarathonService
 from .trust import (
@@ -90,6 +91,7 @@ class Runtime:
     creative_jobs: CreativeJobService
     cockpit: CockpitService
     deployment: DeploymentFabricService
+    release_candidate: ReleaseCandidateService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
@@ -110,6 +112,10 @@ class Runtime:
     @property
     def creative(self) -> CreativeJobService:
         return self.creative_jobs
+
+    @property
+    def rc_assessment(self) -> ReleaseCandidateService:
+        return self.release_candidate
 
     @classmethod
     def open(cls, path: str) -> "Runtime":
@@ -254,6 +260,12 @@ class Runtime:
                 trust,
                 continuity,
             )
+            release_candidate = ReleaseCandidateService(
+                database,
+                ledger,
+                trust,
+                continuity,
+            )
             return cls(
                 database,
                 ledger,
@@ -284,6 +296,7 @@ class Runtime:
                 creative_jobs,
                 cockpit,
                 deployment,
+                release_candidate,
             )
         except BaseException:
             database.close()
