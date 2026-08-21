@@ -25,6 +25,7 @@ from .continuity import ContinuityService
 from .cockpit import CockpitService
 from .creative import CreativeJobService
 from .db import Database
+from .deployment import DeploymentFabricService
 from .durable import DurableOutbox
 from .errors import StarcomError, ValidationError
 from .execution_plan import C5ExecutionPlanService
@@ -88,6 +89,7 @@ class Runtime:
     research_marathon: ResearchMarathonService
     creative_jobs: CreativeJobService
     cockpit: CockpitService
+    deployment: DeploymentFabricService
 
     @property
     def architecture_baseline(self) -> C4ArchitectureService:
@@ -246,6 +248,12 @@ class Runtime:
                 outbox,
             )
             cockpit = CockpitService(database, ledger, trust)
+            deployment = DeploymentFabricService(
+                database,
+                ledger,
+                trust,
+                continuity,
+            )
             return cls(
                 database,
                 ledger,
@@ -275,6 +283,7 @@ class Runtime:
                 research_marathon,
                 creative_jobs,
                 cockpit,
+                deployment,
             )
         except BaseException:
             database.close()
