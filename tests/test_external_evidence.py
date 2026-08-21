@@ -176,7 +176,9 @@ class ExternalEvidenceTests(unittest.TestCase):
             payload = self.graph.payload(kind, evidence_id=f"evidence-{index}")
             record = self.admit(payload, evidence_id=f"evidence-{index}")
             self.assertEqual(record.kind, kind)
-            self.assertTrue(self.graph.service.verify_evidence(record.evidence_id).ok)
+            self.assertTrue(
+                self.graph.service.verify_evidence(record.evidence_id, as_of=T3).ok
+            )
 
         snapshot = self.graph.service.snapshot(as_of=T3)
         self.assertEqual(
