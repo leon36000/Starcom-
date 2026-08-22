@@ -219,41 +219,45 @@ class ExternalEvidenceTests(unittest.TestCase):
 
     def test_whitespace_mutation_and_unknown_key_fail_closed(self) -> None:
         payload = self.graph.payload()
+        mutated_payload = payload + b" "
+        mutated_signature = self.graph.verifier.sign(payload)
         with self.assertRaises(IntegrityError):
             self.graph.service.admit_evidence(
                 "evidence-1",
                 "external-root",
-                payload + b" ",
-                self.graph.verifier.sign(payload),
+                mutated_payload,
+                mutated_signature,
                 actor="admitter",
                 occurred_at=T2,
             )
         value = payload.decode("utf-8")[:-1] + ',"unexpected":true}'
+        unknown_payload = value.encode("utf-8")
+        unknown_signature = self.graph.verifier.sign(unknown_payload)
         with self.assertRaises(ValidationError):
             self.graph.service.admit_evidence(
                 "evidence-2",
                 "external-root",
-                value.encode("utf-8"),
-                self.graph.verifier.sign(value.encode("utf-8")),
+                unknown_payload,
+                unknown_signature,
                 actor="admitter",
                 occurred_at=T2,
             )
 
     def test_category_claims_expiration_and_identity_are_strict(self) -> None:
+        low_census_payload = self.graph.payload(census_count=799)
         with self.assertRaises(ValidationError):
-            self.admit(self.graph.payload(census_count=799))
+            self.admit(low_census_payload)
+        expired_payload = self.graph.payload(
+            evidence_id="expired",
+            valid_until="2026-08-21T13:00:01.000000Z",
+        )
         with self.assertRaises(StateTransitionError):
-            self.admit(
-                self.graph.payload(
-                    evidence_id="expired",
-                    valid_until="2026-08-21T13:00:01.000000Z",
-                ),
-                evidence_id="expired",
-            )
+            self.admit(expired_payload, evidence_id="expired")
         value = self.graph.payload(kind="COMPONENT_ADOPTION").decode("utf-8")
         value = value.replace('"reviewer_identity":"reviewer-b"', '"reviewer_identity":"operator-a"')
+        identity_payload = value.encode("utf-8")
         with self.assertRaises(ValidationError):
-            self.admit(value.encode("utf-8"))
+            self.admit(identity_payload)
 
     def test_snapshot_excludes_expired_and_missing_categories(self) -> None:
         self.admit(self.graph.payload())
@@ -271,11 +275,12 @@ class ExternalEvidenceTests(unittest.TestCase):
         verification = self.graph.service.verify_evidence(record.evidence_id)
         self.assertFalse(verification.ok)
         self.assertTrue(any("PAYLOAD" in defect for defect in verification.defects))
+        other_payload = self.graph.payload(evidence_id="other-key")
         with self.assertRaises(IntegrityError):
             self.graph.service.admit_evidence(
                 "other-key",
                 "missing-key",
-                self.graph.payload(evidence_id="other-key"),
+                other_payload,
                 b"bad",
                 actor="admitter",
                 occurred_at=T2,
