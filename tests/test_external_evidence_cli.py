@@ -156,7 +156,9 @@ class ExternalEvidenceCliTests(unittest.TestCase):
         self.assertEqual(admitted.returncode, 0, admitted.stderr)
         got = self.run_cli("get", "--evidence-id", "cli-evidence")
         self.assertEqual(got.returncode, 0, got.stderr)
-        verified = self.run_cli("verify", "--evidence-id", "cli-evidence")
+        verified = self.run_cli(
+            "verify", "--evidence-id", "cli-evidence", "--as-of", T2
+        )
         self.assertEqual(verified.returncode, 0, verified.stderr)
         self.assertTrue(self.stdout(verified)["result"]["ok"])
         snapshot = self.run_cli("snapshot", "--as-of", T2)
